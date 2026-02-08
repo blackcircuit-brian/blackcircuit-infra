@@ -2,18 +2,10 @@ server:
   ingress:
     enabled: true
     ingressClassName: traefik
-
-    hosts:
-      - argocd.blackcircuit.ca
-
+    hostname: argocd.blackcircuit.ca
     annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
       traefik.ingress.kubernetes.io/router.tls: "true"
       cert-manager.io/cluster-issuer: letsencrypt-blackcircuit-staging
-
     tls: true
-
-configs:
-  params:
-    server.insecure: "true"
 
