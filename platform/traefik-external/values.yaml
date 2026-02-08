@@ -9,7 +9,7 @@ providers:
 ingressClass:
   enabled: true
   isDefaultClass: false
-  name: traefik-internal
+  name: traefik-external
 
 service:
   type: LoadBalancer
@@ -20,3 +20,4 @@ ports:
     port: 80
   websecure:
     port: 443
+

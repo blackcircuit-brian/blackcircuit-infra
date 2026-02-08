@@ -3,6 +3,7 @@ kind: Application
 metadata:
   name: traefik-internal
   namespace: blackcircuit-system
+  argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
   source:
