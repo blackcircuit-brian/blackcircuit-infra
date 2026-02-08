@@ -2,3 +2,6 @@ resources:
   - namespaces
 #  - ingress
   - cert-manager
+  - traefik-internal
+  - traefik-external
+
