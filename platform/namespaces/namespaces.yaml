@@ -17,3 +17,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: forge-export
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+
