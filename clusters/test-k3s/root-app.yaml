@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: blackcircuit-root
+  namespace: blackcircuit-system
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/blackcircuit-brian/blackcircuit-infra.git
+    targetRevision: main
+    path: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: blackcircuit-platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
