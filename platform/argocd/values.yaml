@@ -2,7 +2,7 @@ server:
   ingress:
     enabled: true
     ingressClassName: traefik-internal
-    hostname: argocd.blackcircuit.ca
+    hostname: argocd.int.blackcircuit.ca
     annotations:
       traefik.ingress.kubernetes.io/router.entrypoints: websecure
       traefik.ingress.kubernetes.io/router.tls: "true"
