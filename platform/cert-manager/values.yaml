@@ -1,0 +1,24 @@
+
+installCRDs: true
+
+global:
+  leaderElection:
+    namespace: blackcircuit-system
+
+extraArgs:
+  - --cluster-resource-namespace=blackcircuit-system
+
+serviceAccount:
+  create: true
+
+prometheus:
+  enabled: false
+
+webhook:
+  timeoutSeconds: 10
+
+cainjector:
+  enabled: true
+
+startupapicheck:
+  enabled: true

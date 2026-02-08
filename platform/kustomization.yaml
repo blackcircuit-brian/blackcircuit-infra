@@ -1,4 +1,4 @@
 resources:
   - namespaces
-  - ingress
+#  - ingress
   - cert-manager
