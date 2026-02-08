@@ -69,6 +69,19 @@ Black Circuit Infrastructure follows a GitOps-driven workflow:
 
 Manual configuration drift is intentionally avoided.
 
+### Bootstrap (k3s / test-k3s)
+
+1. Ensure you are targeting the correct kubecontext (your local k3s cluster).
+2. Install Argo CD and hand off reconciliation to GitOps:
+
+   ```bash
+   ./scripts/bootstrap-argocd.sh test-k3s
+   ```
+
+3. Argo CD will apply the environment root application (`clusters/test-k3s/root-app.yaml`) which points to the environment overlay (`clusters/test-k3s/kustomization.yaml`).
+
+Environment-specific resources (e.g., cert-manager issuers, external-dns config) live under `clusters/<env>/` as Kustomize overlays on top of `platform/`.
+
 ---
 
 ## Governance
@@ -84,4 +97,3 @@ See the `LICENSE` file for usage terms and distribution policies.
 
 Active internal development.
 Designs and structures may change as the platform evolves.
-

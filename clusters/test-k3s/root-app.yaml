@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://github.com/blackcircuit-brian/blackcircuit-infra.git
     targetRevision: main
-    path: platform
+    path: clusters/test-k3s
   destination:
     server: https://kubernetes.default.svc
     namespace: blackcircuit-platform

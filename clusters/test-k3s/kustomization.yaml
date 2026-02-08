@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Shared platform baseline
+  - ../../platform
+
+  # Environment-specific resources
+  - ../../platform/cert-manager/issuers/blackcircuit-staging-ci.yaml
+  - ../../platform/cert-manager/issuers/aethericforge-staging-ci.yaml
