@@ -5,6 +5,8 @@ kind: Kustomization
 metadata:
   name: metallb-internal
   namespace: blackcircuit-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 resources:
   - https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml
 
