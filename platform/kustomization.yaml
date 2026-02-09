@@ -1,7 +1,0 @@
-resources:
-  - namespaces
-  - metallb
-  - cert-manager
-  - traefik-internal
-  - traefik-external
-
