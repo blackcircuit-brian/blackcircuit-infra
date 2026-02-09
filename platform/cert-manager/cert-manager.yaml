@@ -16,9 +16,11 @@ spec:
         installCRDs: true
   destination:
     server: https://kubernetes.default.svc
-    namespace: blackcircuit-system
+    namespace: cert-manager
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 
