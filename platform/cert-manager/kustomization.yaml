@@ -3,5 +3,5 @@ kind: Kustomization
 
 resources:
   - cert-manager.yaml
-  - issuers/blackcircuit-staging-ci.yaml
-  - issuers/aethericforge-staging-ci.yaml
+  - issuers
+
