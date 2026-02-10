@@ -16,7 +16,7 @@ spec:
     targetRevision: 0.15.3
     helm:
       releaseName: metallb
-      skipCRDs: false
+      skipCrds: false
   syncPolicy:
     automated:
       prune: true
