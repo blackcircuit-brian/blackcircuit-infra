@@ -42,6 +42,8 @@ kind: Ingress
 metadata:
   name: hello
   namespace: hello
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned
 spec:
   ingressClassName: nginx-public
   rules:
