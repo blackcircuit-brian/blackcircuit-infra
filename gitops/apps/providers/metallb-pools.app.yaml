@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra
     targetRevision: v0.3
-    path: gitops/manifests/metallb-pools
+    path: gitops/apps/manifests/metallb-pools
     directory:
       recurse: true
   syncPolicy:
