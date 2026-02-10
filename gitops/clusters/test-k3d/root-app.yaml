@@ -7,7 +7,7 @@ spec:
   project: default
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra.git
-    targetRevision: v0.2
+    targetRevision: v0.3
     path: gitops/apps
     directory:
       recurse: true
