@@ -32,6 +32,13 @@ fi
 # ---- Customizable inputs (with sensible defaults) ---------------------------
 ORG_SLUG="${ORG_SLUG:-aethericforge}"
 ENV="${ENV:-test-k3d}"
+APPLY_ROOT_APP="${APPLY_ROOT_APP:-true}"
+
+PHASE="${PHASE:-gitops}"
+
+# Optional ingress hooks (only used when PHASE=ingress|all)
+INGRESS_INSTALL_SCRIPT="${INGRESS_INSTALL_SCRIPT:-bootstrap/ingress/install.sh}"
+ARGOCD_INGRESS_MANIFEST="${ARGOCD_INGRESS_MANIFEST:-bootstrap/argocd/ingress.yaml}"
 
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-argocd}"
 
@@ -75,23 +82,31 @@ fi
 if [[ -f "${VALUES_ORG}" ]]; then VALUES_ARGS+=(-f "${VALUES_ORG}"); fi
 if [[ -f "${VALUES_ENV}" ]]; then VALUES_ARGS+=(-f "${VALUES_ENV}"); fi
 
-echo ">>> Installing Argo CD via Helm (chart ${ARGO_HELM_CHART_VERSION})"
-helm upgrade --install argocd argo/argo-cd \
-  --namespace "${ARGO_NAMESPACE}" \
-  --create-namespace \
-  --version "${ARGO_HELM_CHART_VERSION}" \
-  "${VALUES_ARGS[@]}" \
-  --set dex.enabled=false \
-  --wait
+if [[ "${PHASE}" != "ingress" ]]; then
+  echo ">>> Installing Argo CD via Helm (chart ${ARGO_HELM_CHART_VERSION})"
+  helm upgrade --install argocd argo/argo-cd \
+    --namespace "${ARGO_NAMESPACE}" \
+    --create-namespace \
+    --version "${ARGO_HELM_CHART_VERSION}" \
+    "${VALUES_ARGS[@]}" \
+    --set dex.enabled=false \
+    --wait
+else
+  echo ">>> PHASE=ingress: skipping ArgoCD install"
+fi
 
 echo ">>> Argo CD install complete"
 
 if [[ "${APPLY_ROOT_APP}" == "true" ]]; then
   if [[ -f "${ROOT_APP_PATH}" ]]; then
-    echo ">>> Applying root app: ${ROOT_APP_PATH}"
     
     if grep -qE '^\s*kind:\s*\S+' "${ROOT_APP_PATH}"; then
-      kubectl apply -f "${ROOT_APP_PATH}"
+      if [[ "${PHASE}" != "ingress" ]]; then
+        echo ">>> Applying root app: ${ROOT_APP_PATH}"
+        kubectl apply -f "${ROOT_APP_PATH}"
+      else
+        echo ">>> PHASE=ingress: skipping root app apply"
+      fi
     else
       echo ">>> Root app is empty; skipping apply."
     fi
@@ -103,6 +118,26 @@ if [[ "${APPLY_ROOT_APP}" == "true" ]]; then
   fi
 else
   echo ">>> Skipping root app apply (APPLY_ROOT_APP=false)"
+fi
+
+if [[ "${PHASE}" == "ingress" || "${PHASE}" == "all" ]]; then
+  echo ">>> Ingress phase starting"
+
+  if [[ -f "${INGRESS_INSTALL_SCRIPT}" ]]; then
+    echo ">>> Running ingress install: ${INGRESS_INSTALL_SCRIPT}"
+    bash "${INGRESS_INSTALL_SCRIPT}"
+  else
+    echo ">>> No ingress install script found, skipping"
+  fi
+
+  if [[ -f "${ARGOCD_INGRESS_MANIFEST}" ]]; then
+    echo ">>> Applying Argo CD ingress: ${ARGOCD_INGRESS_MANIFEST}"
+    kubectl apply -f "${ARGOCD_INGRESS_MANIFEST}"
+  else
+    echo ">>> No Argo CD ingress manifest found, skipping"
+  fi
+
+  echo ">>> Ingress phase complete"
 fi
 
 echo ">>> Done."
