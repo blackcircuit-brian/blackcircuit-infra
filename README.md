@@ -1,99 +1,193 @@
-# Black Circuit Infrastructure
+# Black Circuit GitOps Bootstrap (v0)
 
-Black Circuit Infrastructure defines the internal runtime foundation for the Black Circuit ecosystem.
-This repository contains cluster configuration, platform services, deployment patterns, and architectural conventions used to operate Black Circuit environments.
+This repository provides a minimal, opinionated bootstrap flow for bringing up **Argo CD** in a Kubernetes cluster and establishing a **GitOps app-of-apps** control plane.
 
-Black Circuit is the **private source of truth** for development and experimentation.
-Public releases, reusable tooling, and community-facing artifacts are published separately through **Aetheric Forge** when explicitly designated.
-
----
-
-## Purpose
-
-The goals of this repository are:
-
-* Provide a minimal, reproducible infrastructure baseline for Black Circuit clusters.
-* Maintain a consistent deployment model across test and production environments.
-* Establish long-term architectural standards for platform services and runtime workloads.
-* Formalize the internal build process that may eventually inform open-source releases through Aetheric Forge.
-
-This repository prioritizes clarity, stability, and deliberate evolution over rapid feature expansion.
+The focus is on:
+- clarity over flexibility,
+- predictable behavior,
+- and an onboarding flow suitable for local k3d-based development clusters.
 
 ---
 
-## Scope
+## What this does (v0)
 
-This project includes:
+At a high level, the bootstrap process is split into **phases**:
 
-* Kubernetes (k3s) cluster configuration
-* Platform service definitions
-* GitOps deployment structure
-* Internal application deployment patterns
-* Infrastructure documentation
+### 1. GitOps control plane (`PHASE=gitops`, default)
+- Installs Argo CD into the cluster using Helm
+- Applies a root *app-of-apps* Application
+- Hands off ongoing reconciliation to Argo CD
 
-This project does **not** serve as a public distribution channel.
+This phase **does not** require ingress, TLS, or DNS.
+
+### 2. Ingress setup (`PHASE=ingress`)
+- Reserved for installing an ingress provider (and later MetalLB)
+- Applies an Argo CD Ingress manifest if present
+
+This phase assumes Argo CD already exists.
+
+### 3. Combined (`PHASE=all`)
+- Runs the GitOps phase first
+- Then runs the ingress phase
 
 ---
 
-## Relationship to Aetheric Forge
+## Prerequisites
 
-Black Circuit is the internal development environment.
-Aetheric Forge is the external publication layer.
+- A running Kubernetes cluster (k3d recommended)
+- `kubectl`
+- `helm`
 
-Code, tooling, or infrastructure patterns may be exported to Aetheric Forge at the discretion of the maintainers.
-Nothing in this repository should be assumed public, reusable, or open-source unless explicitly released through an approved channel.
+> Cluster creation (k3d), MetalLB, and ingress providers are intentionally **out of scope** for the initial GitOps phase and will be layered in later.
 
 ---
 
-## Repository Structure
+## Repository layout (relevant parts)
 
 ```
-clusters/        Cluster-specific configuration (test, production)
-platform/        Shared platform services and operators
-blackcircuit/    Internal workloads and runtime components
-forge-export/    Artifacts prepared for potential external publication
-docs/            Architecture and operational documentation
+.
+├── bootstrap/
+│   ├── argocd/
+│   │   ├── bootstrap.sh        # main bootstrap script
+│   │   ├── values.yaml         # base Argo CD values
+│   │   ├── values.<org>.yaml   # optional org overrides
+│   │   ├── values.<env>.yaml   # optional env overrides
+│   │   └── ingress.yaml        # (optional) Argo CD ingress
+│   └── ingress/
+│       └── install.sh          # (optional) ingress provider install
+└── gitops/
+    └── clusters/
+        └── <env>/
+            └── root-app.yaml   # app-of-apps entrypoint
 ```
 
-Structure may evolve as the ecosystem grows.
+---
+
+## Quick start (GitOps only)
+
+By default, the script runs in `gitops` phase.
+
+```bash
+cd bootstrap/argocd
+./bootstrap.sh
+```
+
+This will:
+- ensure the Argo CD namespace exists,
+- install Argo CD via Helm,
+- apply the root Application defined at:
+
+```
+gitops/clusters/<ENV>/root-app.yaml
+```
+
+Defaults:
+- `ENV=test-k3d`
+- `ORG_SLUG=aethericforge`
+
+You can override these via environment variables:
+
+```bash
+ENV=dev ORG_SLUG=myorg ./bootstrap.sh
+```
 
 ---
 
-## Deployment Model
+## Accessing Argo CD (no ingress)
 
-Black Circuit Infrastructure follows a GitOps-driven workflow:
+Until ingress is enabled, access Argo CD via port-forward:
 
-1. Changes are committed to this repository.
-2. The cluster reconciles state automatically through the configured control plane.
-3. Test environments validate changes before promotion to production.
+```bash
+kubectl -n argocd port-forward svc/argocd-server 8080:443
+```
 
-Manual configuration drift is intentionally avoided.
+Then open:
 
-### Bootstrap (k3s / test-k3s)
+```
+https://localhost:8080
+```
 
-1. Ensure you are targeting the correct kubecontext (your local k3s cluster).
-2. Install Argo CD and hand off reconciliation to GitOps:
+Retrieve the initial admin password:
 
-   ```bash
-   ./scripts/bootstrap-argocd.sh test-k3s
-   ```
-
-3. Argo CD will apply the environment root application (`clusters/test-k3s/root-app.yaml`) which points to the environment overlay (`clusters/test-k3s/kustomization.yaml`).
-
-Environment-specific resources (e.g., cert-manager issuers, external-dns config) live under `clusters/<env>/` as Kustomize overlays on top of `platform/`.
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret   -o jsonpath="{.data.password}" | base64 -d
+```
 
 ---
 
-## Governance
+## Phase control
 
-Black Circuit is stewarded by its maintainers and follows a deliberate development model.
-Architectural decisions prioritize long-term coherence across infrastructure, creative systems, and runtime services.
+The bootstrap behavior is controlled by the `PHASE` environment variable:
 
-See the `LICENSE` file for usage terms and distribution policies.
+| Phase     | Behavior |
+|-----------|----------|
+| `gitops`  | Install Argo CD and apply root app (default) |
+| `ingress` | Only run ingress-related hooks |
+| `all`     | Run gitops phase, then ingress phase |
+
+Examples:
+
+```bash
+# GitOps only (default)
+./bootstrap.sh
+
+# Ingress only
+PHASE=ingress ./bootstrap.sh
+
+# GitOps + ingress
+PHASE=all ./bootstrap.sh
+```
 
 ---
 
-## Status
+## Optional ingress hooks
 
-Active internal development.
-Designs and structures may change as the platform evolves.
+Ingress-related steps are **intentionally optional** and only run if the corresponding files exist.
+
+### Ingress provider install
+If present, this script will be executed during the ingress phase:
+
+```
+bootstrap/ingress/install.sh
+```
+
+This is where an ingress controller and (later) MetalLB would be installed.
+
+### Argo CD ingress
+If present, this manifest will be applied during the ingress phase:
+
+```
+bootstrap/argocd/ingress.yaml
+```
+
+This allows Argo CD ingress to be managed independently of the core bootstrap.
+
+---
+
+## Design principles
+
+- **GitOps first**: Argo CD is the control plane; everything else is layered on.
+- **Explicit phases**: control plane and ingress concerns are separated.
+- **Minimal assumptions**: no DNS, TLS, or ingress required to get started.
+- **Deterministic inputs**: all behavior is driven by environment variables.
+
+---
+
+## What’s intentionally out of scope (for now)
+
+- Cluster creation (k3d automation)
+- MetalLB configuration
+- Ingress controller selection
+- cert-manager issuers and TLS automation
+- external-dns and DNS01 flows
+
+These will be added incrementally once the GitOps baseline is stable.
+
+---
+
+## Next steps
+
+Planned improvements include:
+- A Python-based bootstrap wrapper to collect user input and generate an env file
+- Optional ingress + TLS automation
+- Expanded documentation once v0 stabilizes

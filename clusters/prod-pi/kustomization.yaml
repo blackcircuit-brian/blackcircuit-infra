@@ -1,4 +1,0 @@
-resources:
-  - ../../platform
-  - metallb/ipaddresspool.yaml
-  - metallb/l2advertisement.yaml
