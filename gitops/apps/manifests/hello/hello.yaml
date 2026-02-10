@@ -55,4 +55,8 @@ spec:
                 name: hello
                 port:
                   number: 80
+  tls:
+  - hosts:
+    - hello.blackcircuit.ca
+    secretName: hello-tls  
 
