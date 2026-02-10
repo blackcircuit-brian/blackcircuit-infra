@@ -11,15 +11,15 @@ spec:
     server: https://kubernetes.default.svc
     namespace: metallb-system
   source:
-    repoURL: https://metallb.github.io/metallb
-    chart: metallb
-    targetRevision: 0.15.3
-    helm:
-      releaseName: metallb
-      skipCrds: false
+    repoURL: https://github.com/metallb/metallb.git
+    targetRevision: v0.15.3
+    path: config/native
+    directory:
+      recurse: true
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+
