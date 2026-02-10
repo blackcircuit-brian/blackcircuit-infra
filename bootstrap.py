@@ -7,7 +7,7 @@ Interactive front-end for bootstrap/argocd/bootstrap.sh.
 - Prompts for key inputs with defaults (interactive mode)
 - Supports non-interactive mode for CI / scripted runs
 - Writes a .env file
-- (Private repos) generates a cluster-local known_hosts file via ssh-keyscan github.com
+- (Private repos) uses a repo-local known_hosts file; generates it via ssh-keyscan github.com if missing
 - Invokes bootstrap.sh with --env-file
 
 Stdlib-only on purpose for OSS friendliness.
@@ -33,13 +33,7 @@ VALID_VIS = ("public", "private")
 
 
 def normalize_github_repo(value: str) -> str:
-    """Normalize GitHub repo input to org/repo (no .git).
-
-    Accepts:
-      - org/repo
-      - https://github.com/org/repo(.git)
-      - git@github.com:org/repo(.git)
-    """
+    """Normalize GitHub repo input to org/repo (no .git)."""
     v = value.strip()
     if not v:
         return ""
@@ -69,24 +63,22 @@ def github_clone_url(org_repo: str, visibility: str) -> str:
 
 
 def needs_ssh_known_hosts(repo_visibility: str, repo_url: str) -> bool:
-    """Return True if we should generate known_hosts (SSH-based repo access)."""
-    if repo_visibility != "private":
-        return False
-    return repo_url.startswith("git@")
+    """Return True if we should use known_hosts (SSH-based repo access)."""
+    return repo_visibility == "private" and repo_url.startswith("git@")
+
+
+def known_hosts_path(repo_root: Path) -> Path:
+    """Repo-local known_hosts file path."""
+    return repo_root / "bootstrap" / "generated" / "known_hosts"
 
 
 def generate_known_hosts(repo_root: Path, host: str = "github.com") -> Path:
-    """Generate a cluster-local known_hosts file using ssh-keyscan.
-
-    This is a pragmatic dev/test choice. It avoids touching ~/.ssh/known_hosts and keeps
-    trust material scoped to the repo/cluster bootstrap artifacts.
-    """
+    """Generate a repo-local known_hosts file using ssh-keyscan."""
     if shutil.which("ssh-keyscan") is None:
         raise RuntimeError("ssh-keyscan not found in PATH (required for private repo SSH access)")
 
-    out_dir = repo_root / "bootstrap" / "generated"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "known_hosts"
+    out_path = known_hosts_path(repo_root)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = ["ssh-keyscan", "-t", "rsa,ecdsa,ed25519", host]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -107,7 +99,7 @@ class BootstrapConfig:
     apply_root_app: bool = True
     root_app_path: str = ""  # derived if empty
 
-    # Future-friendly fields (not necessarily used by bootstrap.sh today)
+    # Git source (used by bootstrap.sh for root Application rendering)
     repo_visibility: str = "public"  # public|private
     github_repo: str = ""           # org/repo
     repo_ref: str = "main"          # branch/tag/sha
@@ -236,6 +228,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
               ./bootstrap.py --env-file bootstrap/env/test-k3d.env
               ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive
               ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --phase all
+              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --ref v0.3
+              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --ref v0.3 --refresh-known-hosts
             """
         ),
     )
@@ -243,7 +237,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--non-interactive", action="store_true", help="Do not prompt; fail if required values are missing")
     p.add_argument("--phase", choices=VALID_PHASES, default=None, help="Override PHASE (gitops|ingress|all)")
     p.add_argument("--yes", action="store_true", help="In interactive mode, accept defaults without prompting (best with --env-file)" )
-    p.add_argument("--no-known-hosts", action="store_true", help="Skip generating known_hosts even for private repos (dev-only escape hatch)")
+    p.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts even for private repos (dev-only escape hatch)" )
+    p.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan for github.com (overwrites cached bootstrap/generated/known_hosts)" )
+    p.add_argument("--ref", "--repo-ref", dest="repo_ref", default=None, help="Override REPO_REF (branch/tag/sha) written to env and used for Argo root app targetRevision" )
     return p.parse_args(argv)
 
 
@@ -279,8 +275,11 @@ def main() -> int:
         repo_ref=existing.get("REPO_REF", "main"),
     )
 
+    # CLI overrides
     if args.phase:
         cfg.phase = args.phase
+    if args.repo_ref:
+        cfg.repo_ref = args.repo_ref.strip()
 
     if args.non_interactive:
         try:
@@ -317,17 +316,27 @@ def main() -> int:
                 print(str(e), file=sys.stderr)
                 return 2
 
+            cfg.repo_ref = _prompt("Git ref (branch/tag/sha)", cfg.repo_ref)
+
     cfg.normalize()
     repo_url = github_clone_url(cfg.github_repo, cfg.repo_visibility)
 
-    known_hosts_path = ""
+    # known_hosts cache-first behavior for private SSH repos
+    known_hosts_file = ""
+    known_hosts_source = ""
     if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
-        try:
-            kh = generate_known_hosts(repo_root, "github.com")
-            known_hosts_path = str(kh)
-        except Exception as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 2
+        kh_path = known_hosts_path(repo_root)
+        if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
+            known_hosts_file = str(kh_path)
+            known_hosts_source = "cached"
+        else:
+            try:
+                kh = generate_known_hosts(repo_root, "github.com")
+                known_hosts_file = str(kh)
+                known_hosts_source = "generated"
+            except Exception as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
 
     env_values: Dict[str, str] = {
         "ORG_SLUG": cfg.org_slug,
@@ -342,9 +351,8 @@ def main() -> int:
         "GIT_REPO_URL": repo_url,
     }
 
-    if known_hosts_path:
-        # Used in later steps when wiring repo-server; harmless if ignored today.
-        env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_path
+    if known_hosts_file:
+        env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
 
     _write_env_file(env_path, env_values)
 
@@ -358,12 +366,15 @@ def main() -> int:
     if cfg.github_repo:
         print(f"REPO_VISIBILITY: {cfg.repo_visibility}")
         print(f"GITHUB_REPO:     {cfg.github_repo}")
+        print(f"REPO_REF:        {cfg.repo_ref}")
         if repo_url:
             print(f"GIT_REPO_URL:    {repo_url}")
     else:
         print("GITHUB_REPO:     (not set)")
-    if known_hosts_path:
-        print(f"KNOWN_HOSTS:     {known_hosts_path}")
+        print(f"REPO_REF:        {cfg.repo_ref}")
+    if known_hosts_file:
+        suffix = f" ({known_hosts_source})" if known_hosts_source else ""
+        print(f"KNOWN_HOSTS:     {known_hosts_file}{suffix}")
     print("")
 
     cmd = ["bash", str(bootstrap_sh), "--env-file", str(env_path)]

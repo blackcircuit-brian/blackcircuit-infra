@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx-public
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    targetRevision: 4.14.2
+    helm:
+      releaseName: ingress-nginx-public
+      values: |
+        controller:
+          ingressClassResource:
+            name: nginx-public
+            enabled: true
+            default: false
+            controllerValue: "k8s.io/ingress-nginx"
+          ingressClass: nginx-public
+          service:
+            type: LoadBalancer
+            externalTrafficPolicy: Local
+            annotations:
+              metallb.io/address-pool: public
+              metallb.io/loadBalancerIPs: "192.168.50.126"
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
