@@ -21,6 +21,7 @@ import shlex
 import subprocess
 import sys
 import textwrap
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
@@ -216,6 +217,34 @@ def _truthy(v: str) -> bool:
     return v.strip().lower() in ("true", "1", "yes", "y")
 
 
+
+def _run_metallb(repo_root: Path, script_path: Path, kube_context: Optional[str], version: Optional[str]) -> None:
+    """Run MetalLB bootstrap installer as a pre-step (intentionally outside PHASE).
+
+    MetalLB (CRDs + controller) is installed via bootstrap to avoid GitOps/CRD lifecycle issues.
+    MetalLB configuration (IPAddressPool/L2Advertisement) should remain in GitOps-root.
+    """
+    if not script_path.exists():
+        raise RuntimeError(f"MetalLB script not found at: {script_path}")
+
+    env = dict(os.environ)
+    if kube_context:
+        env["KUBE_CONTEXT"] = kube_context
+    if version:
+        env["METALLB_CHART_VERSION"] = version
+
+    cmd = ["bash", str(script_path)]
+    print("Running MetalLB bootstrap:")
+    print("  " + " ".join(shlex.quote(c) for c in cmd))
+    if kube_context:
+        print(f"  (KUBE_CONTEXT={kube_context})")
+    if version:
+        print(f"  (METALLB_CHART_VERSION={version})")
+    print("")
+
+    subprocess.run(cmd, cwd=str(repo_root), env=env, check=True)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="bootstrap.py",
@@ -240,6 +269,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts even for private repos (dev-only escape hatch)" )
     p.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan for github.com (overwrites cached bootstrap/generated/known_hosts)" )
     p.add_argument("--ref", "--repo-ref", dest="repo_ref", default=None, help="Override REPO_REF (branch/tag/sha) written to env and used for Argo root app targetRevision" )
+    p.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step (CRDs + controller) before Argo bootstrap")
+    p.add_argument("--metallb-script", default=None, help="Path to MetalLB installer script (default: bootstrap/metallb.sh)")
+    p.add_argument("--metallb-version", default=None, help="Optional MetalLB chart/version forwarded to installer (env: METALLB_CHART_VERSION)")
+    p.add_argument("--kube-context", default=None, help="Optional kubectl context forwarded to installer (env: KUBE_CONTEXT)")
     return p.parse_args(argv)
 
 
@@ -354,6 +387,12 @@ def main() -> int:
     if known_hosts_file:
         env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
 
+    # MetalLB bootstrap metadata (informational; not GitOps-managed)
+    if args.with_metallb:
+        env_values["METALLB_ENABLED"] = "true"
+        if args.metallb_version:
+            env_values["METALLB_CHART_VERSION"] = args.metallb_version
+
     _write_env_file(env_path, env_values)
 
     print("\n=== Summary ===")
@@ -383,6 +422,18 @@ def main() -> int:
     print("")
 
     try:
+        # Optional, explicit pre-step. Kept out of PHASE intentionally.
+        if args.with_metallb:
+            default_mb = repo_root / "bootstrap" / "metallb" / "metallb.sh"
+            mb_script = Path(args.metallb_script) if args.metallb_script else default_mb
+            mb_script = (repo_root / mb_script).resolve() if not mb_script.is_absolute() else mb_script
+            _run_metallb(
+                repo_root=repo_root,
+                script_path=mb_script,
+                kube_context=args.kube_context,
+                version=args.metallb_version,
+            )
+
         subprocess.run(cmd, cwd=str(repo_root), check=True)
     except subprocess.CalledProcessError as e:
         print(f"\nBootstrap failed with exit code {e.returncode}", file=sys.stderr)
