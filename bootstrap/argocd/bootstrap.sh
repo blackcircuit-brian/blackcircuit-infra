@@ -87,6 +87,14 @@ if [[ -f "${VALUES_ORG}" ]]; then VALUES_ARGS+=(-f "${VALUES_ORG}"); fi
 if [[ -f "${VALUES_ENV}" ]]; then VALUES_ARGS+=(-f "${VALUES_ENV}"); fi
 
 if [[ "${PHASE}" != "ingress" ]]; then
+  echo ">>> Installing cert-manager via helm"
+  helm repo add jetstack https://charts.jetstack.io
+  helm repo update
+
+  helm upgrade --install cert-manager jetstack/cert-manager \
+    -n cert-manager --create-namespace \
+    --set crds.enabled=true
+  
   echo ">>> Installing Argo CD via Helm (chart ${ARGO_HELM_CHART_VERSION})"
   helm upgrade --install argocd argo/argo-cd \
     --namespace "${ARGO_NAMESPACE}" \

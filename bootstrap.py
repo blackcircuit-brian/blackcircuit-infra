@@ -287,7 +287,7 @@ def main() -> int:
         print(f"ERROR: Could not find bootstrap.sh at: {bootstrap_sh}", file=sys.stderr)
         return 2
 
-    default_env_file = repo_root / "bootstrap" / "env" / "test-k3d.env"
+    default_env_file = repo_root / "bootstrap" / "env" / "kubeadm.env"
     if args.env_file:
         env_path = Path(args.env_file)
         env_path = (repo_root / env_path).resolve() if not env_path.is_absolute() else env_path
@@ -298,7 +298,7 @@ def main() -> int:
 
     cfg = BootstrapConfig(
         org_slug=existing.get("ORG_SLUG", "aethericforge"),
-        env=existing.get("ENV", "test-k3d"),
+        env=existing.get("ENV", "kubeadm"),
         argo_namespace=existing.get("ARGO_NAMESPACE", existing.get("ARGOCD_NAMESPACE", "argocd")),
         phase=existing.get("PHASE", "gitops"),
         apply_root_app=_truthy(existing.get("APPLY_ROOT_APP", "true")),

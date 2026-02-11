@@ -19,6 +19,11 @@ applicationSet:
 redis:
   enabled: true
 
+tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Exists"
+    effect: "NoSchedule"
+
 configs:
   # Useful when you later render Helm via Kustomize in apps
   cm:
