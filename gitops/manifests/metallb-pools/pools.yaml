@@ -5,26 +5,22 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-    - 192.168.50.126/32
+    - 192.168.3.126/32
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
   name: private
   namespace: metallb-system
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   addresses:
-    - 192.168.50.254/32
+    - 192.168.3.254/32
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
   name: l2
   namespace: metallb-system
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   ipAddressPools:
     - public

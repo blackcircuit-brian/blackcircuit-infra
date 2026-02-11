@@ -27,7 +27,7 @@ spec:
             externalTrafficPolicy: Local
             annotations:
               metallb.io/address-pool: public
-              metallb.io/loadBalancerIPs: "192.168.50.126"
+              metallb.io/loadBalancerIPs: "192.168.3.126"
   syncPolicy:
     automated:
       prune: true
