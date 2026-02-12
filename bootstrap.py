@@ -29,7 +29,6 @@ from typing import Dict, Optional
 import shutil
 import base64
 import secrets
-import json
 
 
 VALID_PHASES = ("gitops", "ingress", "all")
@@ -201,6 +200,7 @@ def _write_env_file(path: Path, values: Dict[str, str]) -> None:
 
 
 
+
 def _generate_tsig_secret_base64(nbytes: int = 32) -> str:
     """Generate a base64 TSIG secret suitable for BIND9 (RFC2136)."""
     return base64.b64encode(secrets.token_bytes(nbytes)).decode("ascii")
@@ -244,41 +244,62 @@ def _emit_bind9_snippet(
     os.chmod(out_path, 0o644)
 
 
-def _patch_applicationsets_ref(
-    argo_namespace: str,
-    repo_url: str,
-    repo_ref: str,
-    kube_context: Optional[str] = None,
+def _apply_rfc2136_tsig_secret(
+    namespace: str,
+    secret_name: str,
+    secret_key: str,
+    secret_file: Path,
+    kube_context: str | None = None,
 ) -> None:
-    """Best-effort: patch all ApplicationSets in argo_namespace to use repo_url + repo_ref."""
-    get_cmd = ["kubectl"]
+    """Create/update a Kubernetes Secret from the local TSIG secret file (idempotent)."""
+    if not secret_file.exists() or not secret_file.is_file():
+        print(f">>> RFC2136 TSIG secret file not found; skipping Secret apply: {secret_file}")
+        return
+    secret_value = secret_file.read_text(encoding="utf-8").strip()
+    if not secret_value:
+        print(f">>> RFC2136 TSIG secret file is empty; skipping Secret apply: {secret_file}")
+        return
+
+    # Ensure namespace exists
+    ns_cmd = ["kubectl"]
     if kube_context:
-        get_cmd += ["--context", kube_context]
-    get_cmd += ["-n", argo_namespace, "get", "applicationsets.argoproj.io", "-o", "name"]
+        ns_cmd += ["--context", kube_context]
+    ns_cmd += ["create", "namespace", namespace, "--dry-run=client", "-o", "yaml"]
     try:
-        r = subprocess.run(get_cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError:
-        print(">>> No ApplicationSets found (or ApplicationSet CRD not installed); skipping ApplicationSet ref patch.")
-        return
-
-    names = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
-    if not names:
-        print(">>> No ApplicationSets found; skipping ApplicationSet ref patch.")
-        return
-
-    patch = {"spec": {"template": {"spec": {"source": {"repoURL": repo_url, "targetRevision": repo_ref}}}}}
-
-    for name in names:
-        cmd = ["kubectl"]
+        ns_yaml = subprocess.run(ns_cmd, check=True, capture_output=True, text=True).stdout
+        apply_cmd = ["kubectl"]
         if kube_context:
-            cmd += ["--context", kube_context]
-        cmd += ["-n", argo_namespace, "patch", name, "--type", "merge", "-p", json.dumps(patch)]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-            print(f">>> Patched {name} targetRevision to {repo_ref}")
-        except subprocess.CalledProcessError as e:
-            msg = (e.stderr or e.stdout or "").strip()
-            print(f">>> WARNING: Failed to patch {name}: {msg}", file=sys.stderr)
+            apply_cmd += ["--context", kube_context]
+        apply_cmd += ["apply", "-f", "-"]
+        subprocess.run(apply_cmd, check=True, input=ns_yaml, text=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f">>> WARNING: Failed ensuring namespace {namespace}: {e}", file=sys.stderr)
+
+    print(f">>> Creating RFC2136 TSIG secret: {namespace}/{secret_name}")
+    create_cmd = ["kubectl"]
+    if kube_context:
+        create_cmd += ["--context", kube_context]
+    create_cmd += [
+        "-n",
+        namespace,
+        "create",
+        "secret",
+        "generic",
+        secret_name,
+        f"--from-literal={secret_key}={secret_value}",
+        "--dry-run=client",
+        "-o",
+        "yaml",
+    ]
+    try:
+        secret_yaml = subprocess.run(create_cmd, check=True, capture_output=True, text=True).stdout
+        apply_cmd = ["kubectl"]
+        if kube_context:
+            apply_cmd += ["--context", kube_context]
+        apply_cmd += ["apply", "-f", "-"]
+        subprocess.run(apply_cmd, check=True, input=secret_yaml, text=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f">>> WARNING: Failed creating RFC2136 TSIG Secret {namespace}/{secret_name}: {e}", file=sys.stderr)
 
 def _find_repo_root(start: Path) -> Path:
     cur = start.resolve()
@@ -386,11 +407,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--rfc2136-tsig-alg", default=None, help="TSIG algorithm (env: RFC2136_TSIG_ALG; e.g., hmac-sha256)")
     p.add_argument("--rfc2136-tsig-secret-file", default=None, help="Path to file containing TSIG secret (base64) (env: RFC2136_TSIG_SECRET_FILE)")
     p.add_argument("--rfc2136-tsig-generate", action="store_true", help="Generate TSIG secret file if missing (local-first).")
-    p.add_argument(
-        "--emit-bind9-snippet",
-        action="store_true",
-        help="Write a BIND9 configuration snippet for the RFC2136 TSIG key + update-policy under bootstrap/generated/bind9/.",
-    )
+    p.add_argument("--emit-bind9-snippet", action="store_true", help="Write a BIND9 configuration snippet for the RFC2136 TSIG key + update-policy under bootstrap/generated/bind9/.")
+    p.add_argument("--apply-rfc2136-tsig-secret", action="store_true", help="Create/update the rfc2136 TSIG Secret in Kubernetes (external-dns-internal) from the local secret file.")
 
     return p.parse_args(argv)
 
@@ -507,24 +525,7 @@ def main() -> int:
     cloudflare_secret_name = (args.cloudflare_secret_name or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAME", "cloudflare-api-token")).strip() or "cloudflare-api-token"
     cloudflare_secret_namespace = (args.cloudflare_secret_namespace or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", "cert-manager")).strip() or "cert-manager"
 
-    # Optional: also materialize the same token Secret in another namespace (e.g., external-dns-public).
-    # Precedence: CLI flag (including explicit empty via --no-cloudflare-token-duplicate) > existing env file > unset.
-    cloudflare_dup_was_set = (
-        args.cloudflare_token_duplicate_namespace is not None
-        or "CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE" in existing
-    )
-    cloudflare_token_duplicate_namespace = (
-        args.cloudflare_token_duplicate_namespace
-        if args.cloudflare_token_duplicate_namespace is not None
-        else existing.get("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", "").strip()
-    )
 
-    if cloudflare_token_file:
-        p = Path(cloudflare_token_file).expanduser()
-        if not p.exists() or not p.is_file():
-            print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
-            return 2
-        cloudflare_token_file = str(p.resolve())
     # RFC2136 / BIND9 (external-dns internal) inputs
     rfc2136_host = (args.rfc2136_host or existing.get("RFC2136_HOST", "")).strip()
     rfc2136_zone = (args.rfc2136_zone or existing.get("RFC2136_ZONE", "")).strip()
@@ -532,11 +533,12 @@ def main() -> int:
     rfc2136_tsig_alg = (args.rfc2136_tsig_alg or existing.get("RFC2136_TSIG_ALG", "")).strip()
     rfc2136_tsig_secret_file_raw = (args.rfc2136_tsig_secret_file or existing.get("RFC2136_TSIG_SECRET_FILE", "")).strip()
 
-    rfc2136_tsig_secret_path: Optional[Path] = None
+    rfc2136_tsig_secret_path: Path | None = None
     if rfc2136_tsig_secret_file_raw:
         p = Path(rfc2136_tsig_secret_file_raw).expanduser()
         rfc2136_tsig_secret_path = (repo_root / p).resolve() if not p.is_absolute() else p
 
+    # Generate TSIG secret file if requested and missing.
     if args.rfc2136_tsig_generate:
         if not rfc2136_tsig_secret_path:
             rfc2136_tsig_secret_path = (repo_root / "bootstrap" / "inputs" / "rfc2136-tsig.secret").resolve()
@@ -558,6 +560,24 @@ def main() -> int:
             print(f">>> Wrote BIND9 snippet: {out_path}")
 
 
+    # Optional: also materialize the same token Secret in another namespace (e.g., external-dns-public).
+    # Precedence: CLI flag (including explicit empty via --no-cloudflare-token-duplicate) > existing env file > unset.
+    cloudflare_dup_was_set = (
+        args.cloudflare_token_duplicate_namespace is not None
+        or "CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE" in existing
+    )
+    cloudflare_token_duplicate_namespace = (
+        args.cloudflare_token_duplicate_namespace
+        if args.cloudflare_token_duplicate_namespace is not None
+        else existing.get("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", "").strip()
+    )
+
+    if cloudflare_token_file:
+        p = Path(cloudflare_token_file).expanduser()
+        if not p.exists() or not p.is_file():
+            print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
+            return 2
+        cloudflare_token_file = str(p.resolve())
 
 
     # known_hosts cache-first behavior for private SSH repos
@@ -611,7 +631,6 @@ def main() -> int:
         if args.metallb_version:
             env_values["METALLB_CHART_VERSION"] = args.metallb_version
     # Persist RFC2136 inputs if provided (so out-of-band BIND9 config remains captured/repeatable).
-    # Only write keys that are explicitly set (CLI) or already present in env file, to avoid noisy diffs.
     rfc_was_set = (
         args.rfc2136_host is not None
         or args.rfc2136_zone is not None
@@ -637,34 +656,16 @@ def main() -> int:
         if rfc2136_tsig_secret_file_raw:
             env_values["RFC2136_TSIG_SECRET_FILE"] = rfc2136_tsig_secret_file_raw
 
+    # Optionally apply the Kubernetes Secret for external-dns-internal.
+    if args.apply_rfc2136_tsig_secret and rfc2136_tsig_secret_path and rfc2136_tsig_secret_path.exists():
+        secret_ns = (existing.get("RFC2136_TSIG_SECRET_NAMESPACE", "external-dns-internal") or "external-dns-internal").strip()
+        secret_name = (existing.get("RFC2136_TSIG_SECRET_NAME", "rfc2136-tsig") or "rfc2136-tsig").strip()
+        secret_key = (existing.get("RFC2136_TSIG_SECRET_KEY", "tsig-secret") or "tsig-secret").strip()
+        kube_ctx = getattr(args, "context", None) or getattr(args, "kube_context", None)
+        _apply_rfc2136_tsig_secret(secret_ns, secret_name, secret_key, rfc2136_tsig_secret_path, kube_context=kube_ctx)
+
 
     _write_env_file(env_path, env_values)
-
-    # If the repo ref was explicitly set on this run, keep ArgoCD objects aligned.
-    if args.repo_ref is not None and cfg.apply_root_app:
-        root_app_path = (repo_root / cfg.root_app_path).resolve()
-        apply_cmd = ["kubectl"]
-        if args.kube_context:
-            apply_cmd += ["--context", args.kube_context]
-        apply_cmd += ["-n", cfg.argo_namespace, "apply", "-f", str(root_app_path)]
-        print(">>> Re-applying root app to pick up new targetRevision:")
-        print("  " + " ".join(shlex.quote(c) for c in apply_cmd))
-        try:
-            subprocess.run(apply_cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f">>> WARNING: Failed to apply root app: {e}", file=sys.stderr)
-        # Patch all ApplicationSets to the same repo URL + ref (best-effort).
-        _patch_applicationsets_ref(cfg.argo_namespace, repo_url, cfg.repo_ref, kube_context=args.kube_context)
-        # Ask Argo to refresh quickly (best-effort; non-fatal if annotate fails).
-        refresh_cmd = ["kubectl"]
-        if args.kube_context:
-            refresh_cmd += ["--context", args.kube_context]
-        refresh_cmd += ["-n", cfg.argo_namespace, "annotate", "application", "gitops-root", "argocd.argoproj.io/refresh=hard", "--overwrite"]
-        try:
-            subprocess.run(refresh_cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError:
-            pass
-
 
     print("\n=== Summary ===")
     print(f"Env file:        {env_path}")
