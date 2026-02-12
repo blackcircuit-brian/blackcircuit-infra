@@ -29,6 +29,7 @@ from typing import Dict, Optional
 import shutil
 import base64
 import secrets
+import json
 
 
 VALID_PHASES = ("gitops", "ingress", "all")
@@ -241,6 +242,43 @@ def _emit_bind9_snippet(
     """)
     out_path.write_text(snippet, encoding="utf-8")
     os.chmod(out_path, 0o644)
+
+
+def _patch_applicationsets_ref(
+    argo_namespace: str,
+    repo_url: str,
+    repo_ref: str,
+    kube_context: Optional[str] = None,
+) -> None:
+    """Best-effort: patch all ApplicationSets in argo_namespace to use repo_url + repo_ref."""
+    get_cmd = ["kubectl"]
+    if kube_context:
+        get_cmd += ["--context", kube_context]
+    get_cmd += ["-n", argo_namespace, "get", "applicationsets.argoproj.io", "-o", "name"]
+    try:
+        r = subprocess.run(get_cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError:
+        print(">>> No ApplicationSets found (or ApplicationSet CRD not installed); skipping ApplicationSet ref patch.")
+        return
+
+    names = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    if not names:
+        print(">>> No ApplicationSets found; skipping ApplicationSet ref patch.")
+        return
+
+    patch = {"spec": {"template": {"spec": {"source": {"repoURL": repo_url, "targetRevision": repo_ref}}}}}
+
+    for name in names:
+        cmd = ["kubectl"]
+        if kube_context:
+            cmd += ["--context", kube_context]
+        cmd += ["-n", argo_namespace, "patch", name, "--type", "merge", "-p", json.dumps(patch)]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            print(f">>> Patched {name} targetRevision to {repo_ref}")
+        except subprocess.CalledProcessError as e:
+            msg = (e.stderr or e.stdout or "").strip()
+            print(f">>> WARNING: Failed to patch {name}: {msg}", file=sys.stderr)
 
 def _find_repo_root(start: Path) -> Path:
     cur = start.resolve()
@@ -494,15 +532,13 @@ def main() -> int:
     rfc2136_tsig_alg = (args.rfc2136_tsig_alg or existing.get("RFC2136_TSIG_ALG", "")).strip()
     rfc2136_tsig_secret_file_raw = (args.rfc2136_tsig_secret_file or existing.get("RFC2136_TSIG_SECRET_FILE", "")).strip()
 
-    rfc2136_tsig_secret_path: Path | None = None
+    rfc2136_tsig_secret_path: Optional[Path] = None
     if rfc2136_tsig_secret_file_raw:
         p = Path(rfc2136_tsig_secret_file_raw).expanduser()
         rfc2136_tsig_secret_path = (repo_root / p).resolve() if not p.is_absolute() else p
 
-    # Generate TSIG secret file if requested and missing.
     if args.rfc2136_tsig_generate:
         if not rfc2136_tsig_secret_path:
-            # Default location: bootstrap/inputs/rfc2136-tsig.secret (local-first, gitignored)
             rfc2136_tsig_secret_path = (repo_root / "bootstrap" / "inputs" / "rfc2136-tsig.secret").resolve()
             rfc2136_tsig_secret_file_raw = os.path.relpath(rfc2136_tsig_secret_path, repo_root)
         if not rfc2136_tsig_secret_path.exists():
@@ -512,21 +548,15 @@ def main() -> int:
         else:
             print(f">>> RFC2136 TSIG secret file exists: {rfc2136_tsig_secret_path}")
 
-    # Optionally emit a BIND9 snippet so the out-of-band Pi config is still captured/repeatable.
     if args.emit_bind9_snippet:
         if not (rfc2136_zone and rfc2136_tsig_keyname and rfc2136_tsig_alg and rfc2136_tsig_secret_path and rfc2136_tsig_secret_path.exists()):
             print("WARNING: --emit-bind9-snippet requested but required RFC2136 inputs are missing (zone/keyname/alg/secret-file).", file=sys.stderr)
         else:
             secret_b64 = _read_secret_file(rfc2136_tsig_secret_path)
             out_path = (repo_root / "bootstrap" / "generated" / "bind9" / "rfc2136-tsig.conf").resolve()
-            _emit_bind9_snippet(
-                out_path=out_path,
-                zone=rfc2136_zone,
-                keyname=rfc2136_tsig_keyname,
-                algorithm=rfc2136_tsig_alg,
-                secret_b64=secret_b64,
-            )
+            _emit_bind9_snippet(out_path, rfc2136_zone, rfc2136_tsig_keyname, rfc2136_tsig_alg, secret_b64)
             print(f">>> Wrote BIND9 snippet: {out_path}")
+
 
 
 
@@ -609,6 +639,32 @@ def main() -> int:
 
 
     _write_env_file(env_path, env_values)
+
+    # If the repo ref was explicitly set on this run, keep ArgoCD objects aligned.
+    if args.repo_ref is not None and cfg.apply_root_app:
+        root_app_path = (repo_root / cfg.root_app_path).resolve()
+        apply_cmd = ["kubectl"]
+        if args.kube_context:
+            apply_cmd += ["--context", args.kube_context]
+        apply_cmd += ["-n", cfg.argo_namespace, "apply", "-f", str(root_app_path)]
+        print(">>> Re-applying root app to pick up new targetRevision:")
+        print("  " + " ".join(shlex.quote(c) for c in apply_cmd))
+        try:
+            subprocess.run(apply_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f">>> WARNING: Failed to apply root app: {e}", file=sys.stderr)
+        # Patch all ApplicationSets to the same repo URL + ref (best-effort).
+        _patch_applicationsets_ref(cfg.argo_namespace, repo_url, cfg.repo_ref, kube_context=args.kube_context)
+        # Ask Argo to refresh quickly (best-effort; non-fatal if annotate fails).
+        refresh_cmd = ["kubectl"]
+        if args.kube_context:
+            refresh_cmd += ["--context", args.kube_context]
+        refresh_cmd += ["-n", cfg.argo_namespace, "annotate", "application", "gitops-root", "argocd.argoproj.io/refresh=hard", "--overwrite"]
+        try:
+            subprocess.run(refresh_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError:
+            pass
+
 
     print("\n=== Summary ===")
     print(f"Env file:        {env_path}")
