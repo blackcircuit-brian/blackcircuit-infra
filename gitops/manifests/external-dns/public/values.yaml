@@ -18,6 +18,9 @@ txtOwnerId: public-1
 txtPrefix: external-dns-
 fullnameOverride: external-dns-public
 
+extraArgs:
+  - --ingress-class=nginx-public
+
 policy: sync
 
 # Optional: reduce noise / improve safety
