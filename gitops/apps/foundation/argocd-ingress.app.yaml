@@ -1,16 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cert-manager-issuers
+  name: argocd
 spec:
   project: default
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra
     targetRevision: v0.3
-    path: gitops/manifests/cert-manager/issuers
+    path: gitops/manifests/argocd
   destination:
     server: https://kubernetes.default.svc
-    namespace: cert-manager
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
