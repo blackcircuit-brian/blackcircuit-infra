@@ -358,50 +358,50 @@ def main() -> int:
 
 
 # SSH repo secret support (private repos)
-ssh_key_file = ""
-repo_ssh_secret_name = existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")
-if args.repo_ssh_secret:
-    repo_ssh_secret_name = args.repo_ssh_secret.strip() or repo_ssh_secret_name
+    ssh_key_file = ""
+    repo_ssh_secret_name = existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")
+    if args.repo_ssh_secret:
+        repo_ssh_secret_name = args.repo_ssh_secret.strip() or repo_ssh_secret_name
 
-# Prefer CLI override, then existing env file value
-if args.ssh_key_file:
-    ssh_key_file = args.ssh_key_file.strip()
-else:
-    ssh_key_file = existing.get("SSH_PRIVATE_KEY_FILE", "").strip()
+    # Prefer CLI override, then existing env file value
+    if args.ssh_key_file:
+        ssh_key_file = args.ssh_key_file.strip()
+    else:
+        ssh_key_file = existing.get("SSH_PRIVATE_KEY_FILE", "").strip()
 
-if needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
-    if not ssh_key_file:
-        # Pick a sensible default if present
-        default_key = str(Path.home() / ".ssh" / "id_ed25519")
-        if not Path(default_key).exists():
-            default_key = str(Path.home() / ".ssh" / "id_rsa")
-        if args.non_interactive:
-            print("ERROR: Private repo selected but no SSH key provided. Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).", file=sys.stderr)
-            return 2
-        ssh_key_file = _prompt("SSH private key file (for repo access)", default_key if Path(default_key).exists() else "")
-    if ssh_key_file:
-        p = Path(ssh_key_file).expanduser()
-        if not p.exists() or not p.is_file():
-            print(f"ERROR: SSH key file not found: {p}", file=sys.stderr)
-            return 2
-        ssh_key_file = str(p.resolve())
-
-    # known_hosts cache-first behavior for private SSH repos
-    known_hosts_file = ""
-    known_hosts_source = ""
-    if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
-        kh_path = known_hosts_path(repo_root)
-        if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
-            known_hosts_file = str(kh_path)
-            known_hosts_source = "cached"
-        else:
-            try:
-                kh = generate_known_hosts(repo_root, "github.com")
-                known_hosts_file = str(kh)
-                known_hosts_source = "generated"
-            except Exception as e:
-                print(f"ERROR: {e}", file=sys.stderr)
+    if needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
+        if not ssh_key_file:
+            # Pick a sensible default if present
+            default_key = str(Path.home() / ".ssh" / "id_ed25519")
+            if not Path(default_key).exists():
+                default_key = str(Path.home() / ".ssh" / "id_rsa")
+            if args.non_interactive:
+                print("ERROR: Private repo selected but no SSH key provided. Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).", file=sys.stderr)
                 return 2
+            ssh_key_file = _prompt("SSH private key file (for repo access)", default_key if Path(default_key).exists() else "")
+        if ssh_key_file:
+            p = Path(ssh_key_file).expanduser()
+            if not p.exists() or not p.is_file():
+                print(f"ERROR: SSH key file not found: {p}", file=sys.stderr)
+                return 2
+            ssh_key_file = str(p.resolve())
+
+        # known_hosts cache-first behavior for private SSH repos
+        known_hosts_file = ""
+        known_hosts_source = ""
+        if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
+            kh_path = known_hosts_path(repo_root)
+            if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
+                known_hosts_file = str(kh_path)
+                known_hosts_source = "cached"
+            else:
+                try:
+                    kh = generate_known_hosts(repo_root, "github.com")
+                    known_hosts_file = str(kh)
+                    known_hosts_source = "generated"
+                except Exception as e:
+                    print(f"ERROR: {e}", file=sys.stderr)
+                    return 2
 
     env_values: Dict[str, str] = {
         "ORG_SLUG": cfg.org_slug,
