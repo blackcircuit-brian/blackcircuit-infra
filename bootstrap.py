@@ -268,13 +268,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--yes", action="store_true", help="In interactive mode, accept defaults without prompting (best with --env-file)" )
     p.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts even for private repos (dev-only escape hatch)" )
     p.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan for github.com (overwrites cached bootstrap/generated/known_hosts)" )
-    p.add_argument("--ssh-key-file", dest="ssh_key_file", default=None, help="Path to SSH private key for ArgoCD repo access (private repos). Written to env as SSH_PRIVATE_KEY_FILE.")
-    p.add_argument("--repo-ssh-secret", dest="repo_ssh_secret", default=None, help="Name of the ArgoCD repository Secret to create/update (default: repo-git-ssh). Written to env as REPO_SSH_SECRET_NAME.")
     p.add_argument("--ref", "--repo-ref", dest="repo_ref", default=None, help="Override REPO_REF (branch/tag/sha) written to env and used for Argo root app targetRevision" )
     p.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step (CRDs + controller) before Argo bootstrap")
     p.add_argument("--metallb-script", default=None, help="Path to MetalLB installer script (default: bootstrap/metallb.sh)")
     p.add_argument("--metallb-version", default=None, help="Optional MetalLB chart/version forwarded to installer (env: METALLB_CHART_VERSION)")
     p.add_argument("--kube-context", default=None, help="Optional kubectl context forwarded to installer (env: KUBE_CONTEXT)")
+
+    p.add_argument("--ssh-key-file", default=None, help="Path to SSH private key for ArgoCD repo access (private repos)")
+    p.add_argument("--repo-ssh-secret", default=None, help="Name of ArgoCD repository secret to create/update (default: repo-git-ssh)")
+    p.add_argument("--cloudflare-token-file", default=None, help="Path to Cloudflare API token file (for DNS-01 issuance)")
+    p.add_argument("--cloudflare-secret-name", default=None, help="Name of Cloudflare token secret (default: cloudflare-api-token)")
+    p.add_argument("--cloudflare-secret-namespace", default=None, help="Namespace for Cloudflare token secret (default: cert-manager)")
     return p.parse_args(argv)
 
 
@@ -357,17 +361,9 @@ def main() -> int:
     repo_url = github_clone_url(cfg.github_repo, cfg.repo_visibility)
 
 
-# SSH repo secret support (private repos)
-    ssh_key_file = ""
-    repo_ssh_secret_name = existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")
-    if args.repo_ssh_secret:
-        repo_ssh_secret_name = args.repo_ssh_secret.strip() or repo_ssh_secret_name
-
-    # Prefer CLI override, then existing env file value
-    if args.ssh_key_file:
-        ssh_key_file = args.ssh_key_file.strip()
-    else:
-        ssh_key_file = existing.get("SSH_PRIVATE_KEY_FILE", "").strip()
+    # SSH key + Argo repo secret support (private repos)
+    ssh_key_file = (args.ssh_key_file or existing.get("SSH_PRIVATE_KEY_FILE", "")).strip()
+    repo_ssh_secret_name = (args.repo_ssh_secret or existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")).strip() or "repo-git-ssh"
 
     if needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
         if not ssh_key_file:
@@ -376,9 +372,16 @@ def main() -> int:
             if not Path(default_key).exists():
                 default_key = str(Path.home() / ".ssh" / "id_rsa")
             if args.non_interactive:
-                print("ERROR: Private repo selected but no SSH key provided. Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).", file=sys.stderr)
+                print(
+                    "ERROR: Private repo selected but no SSH key provided. "
+                    "Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).",
+                    file=sys.stderr,
+                )
                 return 2
-            ssh_key_file = _prompt("SSH private key file (for repo access)", default_key if Path(default_key).exists() else "")
+            ssh_key_file = _prompt(
+                "SSH private key file (for repo access)",
+                default_key if Path(default_key).exists() else "",
+            )
         if ssh_key_file:
             p = Path(ssh_key_file).expanduser()
             if not p.exists() or not p.is_file():
@@ -386,22 +389,35 @@ def main() -> int:
                 return 2
             ssh_key_file = str(p.resolve())
 
-        # known_hosts cache-first behavior for private SSH repos
-        known_hosts_file = ""
-        known_hosts_source = ""
-        if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
-            kh_path = known_hosts_path(repo_root)
-            if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
-                known_hosts_file = str(kh_path)
-                known_hosts_source = "cached"
-            else:
-                try:
-                    kh = generate_known_hosts(repo_root, "github.com")
-                    known_hosts_file = str(kh)
-                    known_hosts_source = "generated"
-                except Exception as e:
-                    print(f"ERROR: {e}", file=sys.stderr)
-                    return 2
+    # Cloudflare token secret support (DNS-01 via Cloudflare)
+    cloudflare_token_file = (args.cloudflare_token_file or existing.get("CLOUDFLARE_API_TOKEN_FILE", "")).strip()
+    cloudflare_secret_name = (args.cloudflare_secret_name or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAME", "cloudflare-api-token")).strip() or "cloudflare-api-token"
+    cloudflare_secret_namespace = (args.cloudflare_secret_namespace or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", "cert-manager")).strip() or "cert-manager"
+
+    if cloudflare_token_file:
+        p = Path(cloudflare_token_file).expanduser()
+        if not p.exists() or not p.is_file():
+            print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
+            return 2
+        cloudflare_token_file = str(p.resolve())
+
+
+    # known_hosts cache-first behavior for private SSH repos
+    known_hosts_file = ""
+    known_hosts_source = ""
+    if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
+        kh_path = known_hosts_path(repo_root)
+        if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
+            known_hosts_file = str(kh_path)
+            known_hosts_source = "cached"
+        else:
+            try:
+                kh = generate_known_hosts(repo_root, "github.com")
+                known_hosts_file = str(kh)
+                known_hosts_source = "generated"
+            except Exception as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
 
     env_values: Dict[str, str] = {
         "ORG_SLUG": cfg.org_slug,
@@ -416,10 +432,14 @@ def main() -> int:
         "GIT_REPO_URL": repo_url,
     }
 
-    # If using SSH repo access, bootstrap.sh can create/update the ArgoCD repo secret
     if needs_ssh_known_hosts(cfg.repo_visibility, repo_url) and ssh_key_file:
         env_values["SSH_PRIVATE_KEY_FILE"] = ssh_key_file
         env_values["REPO_SSH_SECRET_NAME"] = repo_ssh_secret_name
+
+    if cloudflare_token_file:
+        env_values["CLOUDFLARE_API_TOKEN_FILE"] = cloudflare_token_file
+        env_values["CLOUDFLARE_API_TOKEN_SECRET_NAME"] = cloudflare_secret_name
+        env_values["CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE"] = cloudflare_secret_namespace
 
     if known_hosts_file:
         env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
