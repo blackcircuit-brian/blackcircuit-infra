@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import shutil
+import base64
+import secrets
 
 
 VALID_PHASES = ("gitops", "ingress", "all")
@@ -197,6 +199,49 @@ def _write_env_file(path: Path, values: Dict[str, str]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+
+def _generate_tsig_secret_base64(nbytes: int = 32) -> str:
+    """Generate a base64 TSIG secret suitable for BIND9 (RFC2136)."""
+    return base64.b64encode(secrets.token_bytes(nbytes)).decode("ascii")
+
+
+def _read_secret_file(path: Path) -> str:
+    """Read a single-line secret file, stripping whitespace/newlines."""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _write_secret_file(path: Path, secret_b64: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(secret_b64.strip() + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def _emit_bind9_snippet(
+    out_path: Path,
+    zone: str,
+    keyname: str,
+    algorithm: str,
+    secret_b64: str,
+    zone_file: str = "/var/lib/bind/db.int.blackcircuit.ca",
+) -> None:
+    """Emit a BIND9 snippet including key + zone update-policy for RFC2136."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    snippet = textwrap.dedent(f"""    key \"{keyname}\" {{
+        algorithm {algorithm};
+        secret \"{secret_b64}\";
+    }};
+
+    zone \"{zone}\" {{
+        type master;
+        file \"{zone_file}\";
+        update-policy {{
+            grant {keyname} zonesub ANY;
+        }};
+    }};
+    """)
+    out_path.write_text(snippet, encoding="utf-8")
+    os.chmod(out_path, 0o644)
+
 def _find_repo_root(start: Path) -> Path:
     cur = start.resolve()
     for _ in range(40):
@@ -279,6 +324,36 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--cloudflare-token-file", default=None, help="Path to Cloudflare API token file (for DNS-01 issuance)")
     p.add_argument("--cloudflare-secret-name", default=None, help="Name of Cloudflare token secret (default: cloudflare-api-token)")
     p.add_argument("--cloudflare-secret-namespace", default=None, help="Namespace for Cloudflare token secret (default: cert-manager)")
+    cf_dup = p.add_mutually_exclusive_group()
+    cf_dup.add_argument(
+        "--cloudflare-token-duplicate-namespace",
+        dest="cloudflare_token_duplicate_namespace",
+        default=None,
+        help=(
+            "If set, also create the Cloudflare API token Secret in this namespace "
+            "(in addition to --cloudflare-secret-namespace / CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE)."
+        ),
+    )
+    cf_dup.add_argument(
+        "--no-cloudflare-token-duplicate",
+        dest="cloudflare_token_duplicate_namespace",
+        action="store_const",
+        const="",
+        help="Disable duplicating the Cloudflare API token into another namespace.",
+    )
+    # RFC2136 / BIND9 dynamic updates (external-dns internal)
+    p.add_argument("--rfc2136-host", default=None, help="RFC2136 DNS server (BIND9) host/IP for internal zone updates (env: RFC2136_HOST)")
+    p.add_argument("--rfc2136-zone", default=None, help="RFC2136 zone name to manage (env: RFC2136_ZONE; e.g., int.blackcircuit.ca)")
+    p.add_argument("--rfc2136-tsig-keyname", default=None, help="TSIG key name (env: RFC2136_TSIG_KEYNAME)")
+    p.add_argument("--rfc2136-tsig-alg", default=None, help="TSIG algorithm (env: RFC2136_TSIG_ALG; e.g., hmac-sha256)")
+    p.add_argument("--rfc2136-tsig-secret-file", default=None, help="Path to file containing TSIG secret (base64) (env: RFC2136_TSIG_SECRET_FILE)")
+    p.add_argument("--rfc2136-tsig-generate", action="store_true", help="Generate TSIG secret file if missing (local-first).")
+    p.add_argument(
+        "--emit-bind9-snippet",
+        action="store_true",
+        help="Write a BIND9 configuration snippet for the RFC2136 TSIG key + update-policy under bootstrap/generated/bind9/.",
+    )
+
     return p.parse_args(argv)
 
 
@@ -394,12 +469,65 @@ def main() -> int:
     cloudflare_secret_name = (args.cloudflare_secret_name or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAME", "cloudflare-api-token")).strip() or "cloudflare-api-token"
     cloudflare_secret_namespace = (args.cloudflare_secret_namespace or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", "cert-manager")).strip() or "cert-manager"
 
+    # Optional: also materialize the same token Secret in another namespace (e.g., external-dns-public).
+    # Precedence: CLI flag (including explicit empty via --no-cloudflare-token-duplicate) > existing env file > unset.
+    cloudflare_dup_was_set = (
+        args.cloudflare_token_duplicate_namespace is not None
+        or "CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE" in existing
+    )
+    cloudflare_token_duplicate_namespace = (
+        args.cloudflare_token_duplicate_namespace
+        if args.cloudflare_token_duplicate_namespace is not None
+        else existing.get("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", "").strip()
+    )
+
     if cloudflare_token_file:
         p = Path(cloudflare_token_file).expanduser()
         if not p.exists() or not p.is_file():
             print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
             return 2
         cloudflare_token_file = str(p.resolve())
+    # RFC2136 / BIND9 (external-dns internal) inputs
+    rfc2136_host = (args.rfc2136_host or existing.get("RFC2136_HOST", "")).strip()
+    rfc2136_zone = (args.rfc2136_zone or existing.get("RFC2136_ZONE", "")).strip()
+    rfc2136_tsig_keyname = (args.rfc2136_tsig_keyname or existing.get("RFC2136_TSIG_KEYNAME", "")).strip()
+    rfc2136_tsig_alg = (args.rfc2136_tsig_alg or existing.get("RFC2136_TSIG_ALG", "")).strip()
+    rfc2136_tsig_secret_file_raw = (args.rfc2136_tsig_secret_file or existing.get("RFC2136_TSIG_SECRET_FILE", "")).strip()
+
+    rfc2136_tsig_secret_path: Path | None = None
+    if rfc2136_tsig_secret_file_raw:
+        p = Path(rfc2136_tsig_secret_file_raw).expanduser()
+        rfc2136_tsig_secret_path = (repo_root / p).resolve() if not p.is_absolute() else p
+
+    # Generate TSIG secret file if requested and missing.
+    if args.rfc2136_tsig_generate:
+        if not rfc2136_tsig_secret_path:
+            # Default location: bootstrap/inputs/rfc2136-tsig.secret (local-first, gitignored)
+            rfc2136_tsig_secret_path = (repo_root / "bootstrap" / "inputs" / "rfc2136-tsig.secret").resolve()
+            rfc2136_tsig_secret_file_raw = os.path.relpath(rfc2136_tsig_secret_path, repo_root)
+        if not rfc2136_tsig_secret_path.exists():
+            secret_b64 = _generate_tsig_secret_base64()
+            _write_secret_file(rfc2136_tsig_secret_path, secret_b64)
+            print(f">>> Generated RFC2136 TSIG secret file: {rfc2136_tsig_secret_path}")
+        else:
+            print(f">>> RFC2136 TSIG secret file exists: {rfc2136_tsig_secret_path}")
+
+    # Optionally emit a BIND9 snippet so the out-of-band Pi config is still captured/repeatable.
+    if args.emit_bind9_snippet:
+        if not (rfc2136_zone and rfc2136_tsig_keyname and rfc2136_tsig_alg and rfc2136_tsig_secret_path and rfc2136_tsig_secret_path.exists()):
+            print("WARNING: --emit-bind9-snippet requested but required RFC2136 inputs are missing (zone/keyname/alg/secret-file).", file=sys.stderr)
+        else:
+            secret_b64 = _read_secret_file(rfc2136_tsig_secret_path)
+            out_path = (repo_root / "bootstrap" / "generated" / "bind9" / "rfc2136-tsig.conf").resolve()
+            _emit_bind9_snippet(
+                out_path=out_path,
+                zone=rfc2136_zone,
+                keyname=rfc2136_tsig_keyname,
+                algorithm=rfc2136_tsig_alg,
+                secret_b64=secret_b64,
+            )
+            print(f">>> Wrote BIND9 snippet: {out_path}")
+
 
 
     # known_hosts cache-first behavior for private SSH repos
@@ -440,6 +568,9 @@ def main() -> int:
         env_values["CLOUDFLARE_API_TOKEN_FILE"] = cloudflare_token_file
         env_values["CLOUDFLARE_API_TOKEN_SECRET_NAME"] = cloudflare_secret_name
         env_values["CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE"] = cloudflare_secret_namespace
+        # Preserve an explicit setting (including empty) so the env file remains stable across runs.
+        if cloudflare_dup_was_set:
+            env_values["CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE"] = cloudflare_token_duplicate_namespace
 
     if known_hosts_file:
         env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
@@ -449,6 +580,33 @@ def main() -> int:
         env_values["METALLB_ENABLED"] = "true"
         if args.metallb_version:
             env_values["METALLB_CHART_VERSION"] = args.metallb_version
+    # Persist RFC2136 inputs if provided (so out-of-band BIND9 config remains captured/repeatable).
+    # Only write keys that are explicitly set (CLI) or already present in env file, to avoid noisy diffs.
+    rfc_was_set = (
+        args.rfc2136_host is not None
+        or args.rfc2136_zone is not None
+        or args.rfc2136_tsig_keyname is not None
+        or args.rfc2136_tsig_alg is not None
+        or args.rfc2136_tsig_secret_file is not None
+        or args.rfc2136_tsig_generate
+        or "RFC2136_HOST" in existing
+        or "RFC2136_ZONE" in existing
+        or "RFC2136_TSIG_KEYNAME" in existing
+        or "RFC2136_TSIG_ALG" in existing
+        or "RFC2136_TSIG_SECRET_FILE" in existing
+    )
+    if rfc_was_set:
+        if rfc2136_host:
+            env_values["RFC2136_HOST"] = rfc2136_host
+        if rfc2136_zone:
+            env_values["RFC2136_ZONE"] = rfc2136_zone
+        if rfc2136_tsig_keyname:
+            env_values["RFC2136_TSIG_KEYNAME"] = rfc2136_tsig_keyname
+        if rfc2136_tsig_alg:
+            env_values["RFC2136_TSIG_ALG"] = rfc2136_tsig_alg
+        if rfc2136_tsig_secret_file_raw:
+            env_values["RFC2136_TSIG_SECRET_FILE"] = rfc2136_tsig_secret_file_raw
+
 
     _write_env_file(env_path, env_values)
 
