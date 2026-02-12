@@ -1,3 +1,7 @@
+metadata:
+  annotations:
+    external-dns.alpha.kubernetes.io/target: "2ce35617-07ec-48c7-a184-0c45e645417a.cfargotunnel.com"
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
 provider: cloudflare
 
 env:
