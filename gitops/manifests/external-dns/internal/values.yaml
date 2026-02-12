@@ -9,6 +9,7 @@ domainFilters:
 registry: txt
 txtOwnerId: internal-1
 txtPrefix: external-dns-
+fullnameOverride: external-dns-internal
 
 policy: upsert-only   # start here; switch to "sync" after validation
 
