@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: providers
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - name: external-dns-internal
+            namespace: external-dns-internal
+            path: gitops/manifests/external-dns/internal
+            owner: internal-1
+          - name: external-dns-public
+            namespace: external-dns-
