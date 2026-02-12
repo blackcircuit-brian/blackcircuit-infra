@@ -22,6 +22,8 @@ spec:
             default: false
             controllerValue: "k8s.io/ingress-nginx"
           ingressClass: nginx-public
+          admissionWebhooks:
+            enabled: false
           service:
             type: LoadBalancer
             externalTrafficPolicy: Local
