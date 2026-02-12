@@ -11,7 +11,7 @@ server:
     tls: true
     tlsSecretName: argocd-tls
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt-staging-dns01
+      cert-manager.io/cluster-issuer: int-ca
       nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
       nginx.ingress.kubernetes.io/ssl-redirect: true
       nginx.ingress.kubernetes.io/force-ssl-redirect: "true"

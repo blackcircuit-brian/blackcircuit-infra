@@ -1,7 +1,29 @@
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: selfsigned
+  name: selfsigned-bootstrap
 spec:
   selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: int-root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: int.blackcircuit.ca Root CA
+  secretName: int-root-ca
+  duration: 87600h  # 10y
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: int-ca
+spec:
+  ca:
+    secretName: int-root-ca
 
