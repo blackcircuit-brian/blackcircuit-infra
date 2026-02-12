@@ -66,6 +66,46 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2;
 need kubectl
 need helm
 
+# ---- Cert-manager CRDs (bootstrap-owned) ------------------------------------
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.14.4}"
+CERT_MANAGER_CRDS_MODE="${CERT_MANAGER_CRDS_MODE:-release}" # release | helm-template
+
+need curl
+
+install_cert_manager_crds() {
+  echo ">>> Installing cert-manager CRDs only (${CERT_MANAGER_VERSION}, mode=${CERT_MANAGER_CRDS_MODE})"
+
+  kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+  case "${CERT_MANAGER_CRDS_MODE}" in
+    release)
+      # Preferred: pinned, stable, no helm-side effects
+      kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.crds.yaml"
+      ;;
+    helm-template)
+      # Alternative: render CRDs via Helm (still applies CRDs only)
+      helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
+      helm repo update >/dev/null
+
+      helm template cert-manager-crds jetstack/cert-manager \
+        --version "${CERT_MANAGER_VERSION#v}" \
+        --namespace cert-manager \
+        --include-crds \
+      | kubectl apply -f -
+      ;;
+    *)
+      echo "ERROR: Unknown CERT_MANAGER_CRDS_MODE=${CERT_MANAGER_CRDS_MODE} (expected: release|helm-template)" >&2
+      exit 1
+      ;;
+  esac
+
+  echo ">>> Waiting for CRDs to be Established"
+  # Wait only on cert-manager CRDs (avoid hanging on unrelated CRDs)
+  mapfile -t cm_crds < <(kubectl get crd -o name | grep -E '\.cert-manager\.io$' || true)
+  if [[ ${#cm_crds[@]} -gt 0 ]]; then
+    kubectl wait --for=condition=Established --timeout=60s "${cm_crds[@]}"
+  fi
+}
 echo ">>> ORG_SLUG=${ORG_SLUG}"
 echo ">>> ENV=${ENV}"
 echo ">>> ARGO_NAMESPACE=${ARGO_NAMESPACE}"
@@ -87,14 +127,9 @@ if [[ -f "${VALUES_ORG}" ]]; then VALUES_ARGS+=(-f "${VALUES_ORG}"); fi
 if [[ -f "${VALUES_ENV}" ]]; then VALUES_ARGS+=(-f "${VALUES_ENV}"); fi
 
 if [[ "${PHASE}" != "ingress" ]]; then
-  echo ">>> Installing cert-manager via helm"
-  helm repo add jetstack https://charts.jetstack.io
-  helm repo update
+  echo ">>> Installing cert-manager CRDs only"
+  install_cert_manager_crds
 
-  helm upgrade --install cert-manager jetstack/cert-manager \
-    -n cert-manager --create-namespace \
-    --set crds.enabled=true
-  
   echo ">>> Installing Argo CD via Helm (chart ${ARGO_HELM_CHART_VERSION})"
   helm upgrade --install argocd argo/argo-cd \
     --namespace "${ARGO_NAMESPACE}" \
@@ -142,12 +177,12 @@ if [[ "${PHASE}" == "ingress" || "${PHASE}" == "all" ]]; then
     echo ">>> No ingress install script found, skipping"
   fi
 
-  if [[ -f "${ARGOCD_INGRESS_MANIFEST}" ]]; then
-    echo ">>> Applying Argo CD ingress: ${ARGOCD_INGRESS_MANIFEST}"
-    kubectl apply -f "${ARGOCD_INGRESS_MANIFEST}"
-  else
-    echo ">>> No Argo CD ingress manifest found, skipping"
-  fi
+#  if [[ -f "${ARGOCD_INGRESS_MANIFEST}" ]]; then
+#    echo ">>> Applying Argo CD ingress: ${ARGOCD_INGRESS_MANIFEST}"
+#    kubectl apply -f "${ARGOCD_INGRESS_MANIFEST}"
+#  else
+#    echo ">>> No Argo CD ingress manifest found, skipping"
+#  fi
 
   echo ">>> Ingress phase complete"
 fi
