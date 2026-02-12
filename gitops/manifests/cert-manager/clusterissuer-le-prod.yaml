@@ -4,7 +4,7 @@ metadata:
   name: letsencrypt-prod-dns01
 spec:
   acme:
-    email: you@example.com
+    email: brian@aethericforge.ca
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
       name: letsencrypt-prod-dns01-account-key
