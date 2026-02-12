@@ -20,7 +20,7 @@ spec:
             name: nginx-private
             enabled: true
             default: false
-            controllerValue: "k8s.io/ingress-nginx"
+            controllerValue: "k8s.io/ingress-nginx-private"
           ingressClass: nginx-private
           admissionWebhooks:
             enabled: false
