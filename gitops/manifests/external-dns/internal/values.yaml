@@ -18,7 +18,7 @@ logLevel: info
 
 extraArgs:
   - --rfc2136-host=pi.int.blackcircuit.ca
-  - --rfc2136-port=53
+  - --rfc2136-port=5335
   - --rfc2136-zone=int.blackcircuit.ca
   - --rfc2136-tsig-axfr
   - --rfc2136-tsig-secret-alg=hmac-sha256
