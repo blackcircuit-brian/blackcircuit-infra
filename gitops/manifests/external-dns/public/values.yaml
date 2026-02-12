@@ -1,0 +1,25 @@
+provider: cloudflare
+
+env:
+  - name: CF_API_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: cloudflare-api-token
+        key: api-token
+
+sources:
+  - ingress
+
+domainFilters:
+  - blackcircuit.ca
+
+registry: txt
+txtOwnerId: public-1
+txtPrefix: external-dns-
+
+policy: sync
+
+# Optional: reduce noise / improve safety
+interval: 1m
+logLevel: info
+

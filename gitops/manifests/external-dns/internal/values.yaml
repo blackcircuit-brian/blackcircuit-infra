@@ -1,0 +1,33 @@
+provider: rfc2136
+
+sources:
+  - ingress
+
+domainFilters:
+  - int.blackcircuit.ca
+
+registry: txt
+txtOwnerId: internal-1
+txtPrefix: external-dns-
+
+policy: upsert-only   # start here; switch to "sync" after validation
+
+interval: 1m
+logLevel: info
+
+extraArgs:
+  - --rfc2136-host=pi.int.blackcircuit.ca
+  - --rfc2136-port=53
+  - --rfc2136-zone=int.blackcircuit.ca
+  - --rfc2136-tsig-axfr
+  - --rfc2136-tsig-alg=hmac-sha256
+  - --rfc2136-tsig-keyname=<TSIG_KEY_NAME>
+  - --rfc2136-tsig-secret=$(RFC2136_TSIG_SECRET)
+
+env:
+  - name: RFC2136_TSIG_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: rfc2136-tsig
+        key: tsig-secret
+
