@@ -11,7 +11,7 @@ metadata:
 #    nginx.ingress.kubernetes.io/auth-signin: "https://id.example.com/realms/PRIMARY/protocol/openid-connect/auth?client_id=web-oidc&response_type=code&scope=openid%20profile%20email%20groups&redirect_uri=$scheme://$host/oauth2/callback"
 #    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-Email,X-Auth-Request-User,X-Auth-Request-Groups"
 spec:
-  ingressClassName: nginx
+  ingressClassName: nginx-private
   tls:
   - hosts:
     - argocd.int.blackcircuit.ca
