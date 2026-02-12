@@ -10,8 +10,9 @@ This repository represents the internal development foundation of the Black Circ
 
 * **Internal First:** Black Circuit is the primary development environment. Public releases occur separately through Aetheric Forge when explicitly approved.
 * **Minimalism Over Complexity:** Contributions should favor clarity and stability rather than feature expansion.
-* **Reproducibility:** All infrastructure changes must be declarative and compatible with the existing GitOps workflow.
+* **Reproducibility:** All infrastructure changes must be declarative and compatible with the existing GitOps workflow. Changes must converge under Argo CD without manual intervention.
 * **Architectural Integrity:** Changes should respect established namespace boundaries, deployment patterns, and repository structure.
+* **Certificate Strategy Boundaries:** Internal domains (`*.int.blackcircuit.ca`) must not depend on public ACME validation. Public and internal certificate flows must remain separate.
 
 ---
 
@@ -19,7 +20,7 @@ This repository represents the internal development foundation of the Black Circ
 
 1. Create a feature branch from the main branch.
 2. Implement changes using declarative manifests, charts, or documented configuration.
-3. Ensure changes deploy cleanly to the test cluster.
+3. Ensure changes deploy cleanly to the kubeadm reference environment and do not assume k3d-specific behavior.
 4. Submit a Pull Request with a clear description of:
 
    * Purpose of the change
@@ -67,3 +68,20 @@ By contributing to this repository, you agree that your contributions fall under
 Final decisions regarding architecture, acceptance of contributions, and repository direction are made by the Black Circuit maintainers.
 
 This project evolves deliberately. Thoughtful proposals are encouraged; rushed changes are not.
+
+---
+
+## Bootstrap and Teardown Requirements
+
+All changes must preserve deterministic bootstrap and teardown behavior.
+
+Specifically:
+
+* A clean cluster must bootstrap without manual patching.
+* Teardown must allow immediate re-bootstrap without residual state.
+* No change may introduce hidden dependencies on existing cluster state.
+* cert-manager resources must not block namespace deletion.
+* Bootstrap-only secrets (e.g., repo SSH, DNS tokens) must not be committed to Git.
+
+Any change that affects bootstrap ordering, CRDs, or controller lifecycle must be tested against a clean cluster rebuild.
+

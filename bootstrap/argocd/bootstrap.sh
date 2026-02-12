@@ -8,10 +8,10 @@ set -euo pipefail
 # Required tools: kubectl, helm
 #
 # Typical usage:
-#   ORG_SLUG=aethericforge ENV=test-k3d ./bootstrap/argocd/bootstrap.sh
+#   ORG_SLUG=aethericforge ENV=kubeadm ./bootstrap/argocd/bootstrap.sh
 #
 # Or:
-#   ./bootstrap/argocd/bootstrap.sh --env-file bootstrap/env/test-k3d.env
+#   ./bootstrap/argocd/bootstrap.sh --env-file bootstrap/env/kubeadm.env
 
 ENV_FILE=""
 
@@ -94,7 +94,7 @@ create_cloudflare_token_secret() {
 
 # ---- Customizable inputs (with sensible defaults) ---------------------------
 ORG_SLUG="${ORG_SLUG:-aethericforge}"
-ENV="${ENV:-test-k3d}"
+ENV="${ENV:-kubeadm}"
 APPLY_ROOT_APP="${APPLY_ROOT_APP:-true}"
 
 PHASE="${PHASE:-gitops}"
