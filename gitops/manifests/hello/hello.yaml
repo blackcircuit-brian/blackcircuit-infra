@@ -43,7 +43,7 @@ metadata:
   name: hello
   namespace: hello
   annotations:
-    cert-manager.io/cluster-issuer: selfsigned
+    cert-manager.io/cluster-issuer: letsencrypt-staging-dns01
 spec:
   ingressClassName: nginx-public
   rules:
