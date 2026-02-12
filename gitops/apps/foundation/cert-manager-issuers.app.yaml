@@ -1,22 +1,18 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: metallb-pools
-  namespace: argocd
+  name: cert-manager-issuers
 spec:
   project: default
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: metallb-system
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra
     targetRevision: v0.3
-    path: gitops/manifests/metallb-pools
-    directory:
-      recurse: true
+    path: gitops/manifests/cert-manager
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+

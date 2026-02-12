@@ -57,3 +57,5 @@ nunit-*.xml
 *.env
 !.env.example
 
+# skip the generated files for bootstrap
+generated/

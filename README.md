@@ -1,193 +1,182 @@
-# Black Circuit GitOps Bootstrap (v0)
+# Black Circuit GitOps Bootstrap (v0.3)
 
-This repository provides a minimal, opinionated bootstrap flow for bringing up **Argo CD** in a Kubernetes cluster and establishing a **GitOps app-of-apps** control plane.
+This repository provides a deterministic, opinionated bootstrap workflow
+for establishing a **GitOps control plane** in Kubernetes using **Argo
+CD**.
 
-The focus is on:
-- clarity over flexibility,
-- predictable behavior,
-- and an onboarding flow suitable for local k3d-based development clusters.
+The goal is not flexibility --- it is reproducibility.
 
----
+This bootstrap now includes:
 
-## What this does (v0)
+-   Argo CD installation
+-   App-of-apps root wiring
+-   MetalLB installation (controller only; pools via GitOps)
+-   ingress-nginx (public + private)
+-   cert-manager
+-   internal CA for `*.int.blackcircuit.ca`
+-   optional public ACME issuers (DNS01 via Cloudflare)
+-   SSH repo secret handling for private Git
 
-At a high level, the bootstrap process is split into **phases**:
+------------------------------------------------------------------------
 
-### 1. GitOps control plane (`PHASE=gitops`, default)
-- Installs Argo CD into the cluster using Helm
-- Applies a root *app-of-apps* Application
-- Hands off ongoing reconciliation to Argo CD
+## Design Goals
 
-This phase **does not** require ingress, TLS, or DNS.
+-   Deterministic cluster rebuild
+-   Clear separation of bootstrap vs GitOps ownership
+-   Minimal manual intervention
+-   Explicit secret lifecycle
+-   Clean teardown capability
 
-### 2. Ingress setup (`PHASE=ingress`)
-- Reserved for installing an ingress provider (and later MetalLB)
-- Applies an Argo CD Ingress manifest if present
+------------------------------------------------------------------------
 
-This phase assumes Argo CD already exists.
+## Bootstrap Model
 
-### 3. Combined (`PHASE=all`)
-- Runs the GitOps phase first
-- Then runs the ingress phase
+Bootstrap is split into **phases**, driven by `bootstrap.py`.
 
----
+### Phase: `gitops` (default)
+
+-   Installs Argo CD via Helm
+-   Applies the root app-of-apps
+-   Installs MetalLB controller (CRDs + controller only)
+-   Hands reconciliation to Argo CD
+
+### Phase: `ingress`
+
+-   Applies ingress-related applications
+-   Requires Argo CD to already exist
+
+### Phase: `all`
+
+-   Runs `gitops` phase
+-   Then runs `ingress` phase
+
+------------------------------------------------------------------------
 
 ## Prerequisites
 
-- A running Kubernetes cluster (k3d recommended)
-- `kubectl`
-- `helm`
+-   A running Kubernetes cluster (kubeadm reference environment)
+-   `kubectl`
+-   `helm`
+-   Cluster-admin privileges
 
-> Cluster creation (k3d), MetalLB, and ingress providers are intentionally **out of scope** for the initial GitOps phase and will be layered in later.
+Cluster creation itself is out of scope.
 
----
+------------------------------------------------------------------------
 
-## Repository layout (relevant parts)
+## Quick Start (kubeadm reference)
 
-```
-.
-├── bootstrap/
-│   ├── argocd/
-│   │   ├── bootstrap.sh        # main bootstrap script
-│   │   ├── values.yaml         # base Argo CD values
-│   │   ├── values.<org>.yaml   # optional org overrides
-│   │   ├── values.<env>.yaml   # optional env overrides
-│   │   └── ingress.yaml        # (optional) Argo CD ingress
-│   └── ingress/
-│       └── install.sh          # (optional) ingress provider install
-└── gitops/
-    └── clusters/
-        └── <env>/
-            └── root-app.yaml   # app-of-apps entrypoint
+``` bash
+./bootstrap.py --env-file bootstrap/env/kubeadm.env
 ```
 
----
+Optional flags:
 
-## Quick start (GitOps only)
-
-By default, the script runs in `gitops` phase.
-
-```bash
-cd bootstrap/argocd
-./bootstrap.sh
+``` bash
+--ssh-key-file ~/.ssh/id_ed25519
+--cloudflare-token-file ~/.cloudflare-token
+--phase gitops|ingress|all
+--non-interactive
 ```
 
-This will:
-- ensure the Argo CD namespace exists,
-- install Argo CD via Helm,
-- apply the root Application defined at:
+Bootstrap will:
 
-```
-gitops/clusters/<ENV>/root-app.yaml
-```
+-   Install Argo CD
+-   Create repo access secret if SSH key provided
+-   Install MetalLB controller
+-   Apply root app-of-apps
+-   Allow Argo CD to reconcile the platform
 
-Defaults:
-- `ENV=test-k3d`
-- `ORG_SLUG=aethericforge`
+------------------------------------------------------------------------
 
-You can override these via environment variables:
+## Repository Layout (Relevant)
 
-```bash
-ENV=dev ORG_SLUG=myorg ./bootstrap.sh
-```
+    bootstrap/
+      argocd/
+        bootstrap.sh
+        teardown.sh
+      metallb/
+        metallb.sh
+    bootstrap.py
 
----
+    gitops/
+      clusters/<env>/root-app.yaml
+      apps/
+      manifests/
 
-## Accessing Argo CD (no ingress)
+Bootstrap installs prerequisites.
 
-Until ingress is enabled, access Argo CD via port-forward:
+GitOps owns everything else.
 
-```bash
+------------------------------------------------------------------------
+
+## Certificates
+
+Internal domain:
+
+    *.int.blackcircuit.ca
+
+This domain is internal-only and not publicly delegated.
+
+Public ACME (Let's Encrypt) **cannot validate internal-only domains**.
+
+Therefore:
+
+-   Internal ingress uses `ClusterIssuer/int-ca`
+-   Public ingress (if configured) may use `letsencrypt-*-dns01`
+
+The internal CA root certificate must be installed into client trust
+stores.
+
+------------------------------------------------------------------------
+
+## Secrets Managed by Bootstrap
+
+Certain secrets are intentionally **not GitOps-managed**:
+
+-   `argocd/repo-git-ssh`
+-   `cert-manager/cloudflare-api-token` (public DNS01 only)
+
+These are bootstrap responsibilities.
+
+------------------------------------------------------------------------
+
+## Accessing Argo CD
+
+Without ingress:
+
+``` bash
 kubectl -n argocd port-forward svc/argocd-server 8080:443
 ```
 
-Then open:
+With internal ingress:
 
-```
-https://localhost:8080
-```
+    https://argocd.int.blackcircuit.ca
 
-Retrieve the initial admin password:
+(Requires trusting internal root CA.)
 
-```bash
-kubectl -n argocd get secret argocd-initial-admin-secret   -o jsonpath="{.data.password}" | base64 -d
-```
+------------------------------------------------------------------------
 
----
+## Clean Rebuild
 
-## Phase control
+Teardown:
 
-The bootstrap behavior is controlled by the `PHASE` environment variable:
-
-| Phase     | Behavior |
-|-----------|----------|
-| `gitops`  | Install Argo CD and apply root app (default) |
-| `ingress` | Only run ingress-related hooks |
-| `all`     | Run gitops phase, then ingress phase |
-
-Examples:
-
-```bash
-# GitOps only (default)
-./bootstrap.sh
-
-# Ingress only
-PHASE=ingress ./bootstrap.sh
-
-# GitOps + ingress
-PHASE=all ./bootstrap.sh
+``` bash
+bootstrap/argocd/teardown.sh
 ```
 
----
+Teardown must remove:
 
-## Optional ingress hooks
+-   Argo CD applications
+-   cert-manager resources
+-   namespaces
+-   lingering finalizers
 
-Ingress-related steps are **intentionally optional** and only run if the corresponding files exist.
+A clean rebuild must succeed without manual intervention.
 
-### Ingress provider install
-If present, this script will be executed during the ingress phase:
+------------------------------------------------------------------------
 
-```
-bootstrap/ingress/install.sh
-```
+## Out of Scope
 
-This is where an ingress controller and (later) MetalLB would be installed.
-
-### Argo CD ingress
-If present, this manifest will be applied during the ingress phase:
-
-```
-bootstrap/argocd/ingress.yaml
-```
-
-This allows Argo CD ingress to be managed independently of the core bootstrap.
-
----
-
-## Design principles
-
-- **GitOps first**: Argo CD is the control plane; everything else is layered on.
-- **Explicit phases**: control plane and ingress concerns are separated.
-- **Minimal assumptions**: no DNS, TLS, or ingress required to get started.
-- **Deterministic inputs**: all behavior is driven by environment variables.
-
----
-
-## What’s intentionally out of scope (for now)
-
-- Cluster creation (k3d automation)
-- MetalLB configuration
-- Ingress controller selection
-- cert-manager issuers and TLS automation
-- external-dns and DNS01 flows
-
-These will be added incrementally once the GitOps baseline is stable.
-
----
-
-## Next steps
-
-Planned improvements include:
-- A Python-based bootstrap wrapper to collect user input and generate an env file
-- Optional ingress + TLS automation
-- Expanded documentation once v0 stabilizes
+-   Cluster provisioning automation
+-   step-ca (future replacement for internal CA)
+-   external-dns automation

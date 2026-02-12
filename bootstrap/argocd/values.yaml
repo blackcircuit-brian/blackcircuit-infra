@@ -5,7 +5,16 @@ server:
   service:
     type: ClusterIP
   ingress:
-    enabled: false
+    enabled: true
+    ingressClassName: nginx-private
+    hostname: argocd.int.blackcircuit.ca
+    tls: true
+    tlsSecretName: argocd-tls
+    annotations:
+      cert-manager.io/cluster-issuer: int-ca
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+      nginx.ingress.kubernetes.io/ssl-redirect: true
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 
 controller:
   replicas: 1
@@ -19,10 +28,18 @@ applicationSet:
 redis:
   enabled: true
 
+tolerations:
+  - key: "node-role.kubernetes.io/control-plane"
+    operator: "Exists"
+    effect: "NoSchedule"
+
 configs:
   # Useful when you later render Helm via Kustomize in apps
   cm:
     kustomize.buildOptions: "--enable-helm"
+    url: https://argocd.int.blackcircuit.ca
+  params:
+    server.insecure: true
   ssh:
     knownHosts: |
       github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
