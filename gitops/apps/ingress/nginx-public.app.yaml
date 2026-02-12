@@ -28,11 +28,12 @@ spec:
             type: LoadBalancer
             externalTrafficPolicy: Local
             annotations:
-              metallb.io/address-pool: public
-              metallb.io/loadBalancerIPs: "192.168.3.126"
+              metallb.universe.tf/address-pool: public
+              metallb.universe.tf/loadBalancerIPs: "192.168.3.126"
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+
