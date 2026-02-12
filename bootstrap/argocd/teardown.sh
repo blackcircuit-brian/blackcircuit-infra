@@ -50,6 +50,9 @@ for p in $(kubectl -n "${ARGO_NAMESPACE}" get appprojects.argoproj.io -o name 2>
   kubectl -n "${ARGO_NAMESPACE}" patch "$p" --type=merge -p '{"metadata":{"finalizers":[]}}' >/dev/null || true
 done
 
+log "Delete ArgoCD namespace"
+kubectl delete ns "${ARGO_NAMESPACE}" --ignore-not-found=true || true
+
 log "Delete cert-manager namespace (controller + webhooks live there)"
 kubectl delete ns cert-manager --ignore-not-found=true || true
 
@@ -57,9 +60,6 @@ if [[ "${REMOVE_CERT_MANAGER_CRDS}" == "true" ]]; then
   log "Removing cert-manager CRDs (destructive)"
   kubectl get crd -o name | grep -E '\.cert-manager\.io$' | xargs -r kubectl delete || true
 fi
-
-log "Delete ArgoCD namespace"
-kubectl delete ns "${ARGO_NAMESPACE}" --ignore-not-found=true || true
 
 force_finalize_namespace() {
   local ns="$1"

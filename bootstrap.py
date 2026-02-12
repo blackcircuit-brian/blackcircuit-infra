@@ -268,6 +268,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--yes", action="store_true", help="In interactive mode, accept defaults without prompting (best with --env-file)" )
     p.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts even for private repos (dev-only escape hatch)" )
     p.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan for github.com (overwrites cached bootstrap/generated/known_hosts)" )
+    p.add_argument("--ssh-key-file", dest="ssh_key_file", default=None, help="Path to SSH private key for ArgoCD repo access (private repos). Written to env as SSH_PRIVATE_KEY_FILE.")
+    p.add_argument("--repo-ssh-secret", dest="repo_ssh_secret", default=None, help="Name of the ArgoCD repository Secret to create/update (default: repo-git-ssh). Written to env as REPO_SSH_SECRET_NAME.")
     p.add_argument("--ref", "--repo-ref", dest="repo_ref", default=None, help="Override REPO_REF (branch/tag/sha) written to env and used for Argo root app targetRevision" )
     p.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step (CRDs + controller) before Argo bootstrap")
     p.add_argument("--metallb-script", default=None, help="Path to MetalLB installer script (default: bootstrap/metallb.sh)")
@@ -354,6 +356,36 @@ def main() -> int:
     cfg.normalize()
     repo_url = github_clone_url(cfg.github_repo, cfg.repo_visibility)
 
+
+# SSH repo secret support (private repos)
+ssh_key_file = ""
+repo_ssh_secret_name = existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")
+if args.repo_ssh_secret:
+    repo_ssh_secret_name = args.repo_ssh_secret.strip() or repo_ssh_secret_name
+
+# Prefer CLI override, then existing env file value
+if args.ssh_key_file:
+    ssh_key_file = args.ssh_key_file.strip()
+else:
+    ssh_key_file = existing.get("SSH_PRIVATE_KEY_FILE", "").strip()
+
+if needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
+    if not ssh_key_file:
+        # Pick a sensible default if present
+        default_key = str(Path.home() / ".ssh" / "id_ed25519")
+        if not Path(default_key).exists():
+            default_key = str(Path.home() / ".ssh" / "id_rsa")
+        if args.non_interactive:
+            print("ERROR: Private repo selected but no SSH key provided. Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).", file=sys.stderr)
+            return 2
+        ssh_key_file = _prompt("SSH private key file (for repo access)", default_key if Path(default_key).exists() else "")
+    if ssh_key_file:
+        p = Path(ssh_key_file).expanduser()
+        if not p.exists() or not p.is_file():
+            print(f"ERROR: SSH key file not found: {p}", file=sys.stderr)
+            return 2
+        ssh_key_file = str(p.resolve())
+
     # known_hosts cache-first behavior for private SSH repos
     known_hosts_file = ""
     known_hosts_source = ""
@@ -383,6 +415,11 @@ def main() -> int:
         "REPO_REF": cfg.repo_ref,
         "GIT_REPO_URL": repo_url,
     }
+
+    # If using SSH repo access, bootstrap.sh can create/update the ArgoCD repo secret
+    if needs_ssh_known_hosts(cfg.repo_visibility, repo_url) and ssh_key_file:
+        env_values["SSH_PRIVATE_KEY_FILE"] = ssh_key_file
+        env_values["REPO_SSH_SECRET_NAME"] = repo_ssh_secret_name
 
     if known_hosts_file:
         env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
