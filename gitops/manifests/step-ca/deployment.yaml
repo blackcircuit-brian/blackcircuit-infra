@@ -31,7 +31,7 @@ spec:
       initContainers:
         - name: init-step-ca
           # Pin a version once selected (recommended).
-          image: smallstep/step-ca:0.24.4
+          image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
@@ -62,7 +62,7 @@ spec:
 
       containers:
         - name: step-ca
-          image: smallstep/step-ca:0.24.4
+          image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: https
