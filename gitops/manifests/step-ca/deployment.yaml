@@ -28,31 +28,33 @@ spec:
             #   --from-literal=provisioner_password='...'
             secretName: step-ca-secrets
 
+
       initContainers:
         - name: init-step-ca
-          # Pin a version once selected (recommended).
-          image: smallstep/step-ca:0.29.0
+          image: smallstep/step-cli:0.29.0
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -euo pipefail
+
               if [ -f /home/step/config/ca.json ]; then
                 echo "step-ca already initialized."
                 exit 0
               fi
 
-              echo "Initializing step-ca..."
-              step-ca init \
+              echo "Initializing step-ca config..."
+              step ca init \
                 --name "Black Circuit Internal CA" \
                 --dns "step-ca.step-ca.svc.cluster.local" \
                 --address ":8443" \
                 --provisioner "k8s-int" \
                 --password-file /home/step/secrets/password \
                 --provisioner-password-file /home/step/secrets/provisioner_password \
-                --acme
+                --acme \
+                --no-db
 
-              echo "Done."
+              echo "Initialization complete."
           volumeMounts:
             - name: data
               mountPath: /home/step
