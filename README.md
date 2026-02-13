@@ -1,22 +1,25 @@
-# Black Circuit GitOps Bootstrap (v0.4.1)
+# Black Circuit GitOps Bootstrap (v0.4.2)
 
 This repository provides a deterministic, opinionated bootstrap workflow
 for establishing a GitOps control plane in Kubernetes using Argo CD.
 
-The goal is not flexibility --- it is reproducibility.
+The goal is not flexibility — it is reproducibility.
 
-Version 0.4.0 introduced a fully automated DNS control plane with strict
+Version 0.4 introduced a fully automated DNS control plane with strict
 authority separation between internal and public domains.
+
+Version 0.4.2 introduces an internal PKI service (step-ca) deployed under GitOps.
+Issuer migration to ACME will follow in a subsequent point release.
 
 ------------------------------------------------------------------------
 
 ## Documentation
 
--   Kubernetes bootstrap with kubeadm:
-    `docs/kubernetes-kubeadm-bootstrap.md`
--   Architecture: `docs/architecture.md`
--   Operations: `docs/operations.md`
--   GitOps structure: `gitops/README.md`
+- Kubernetes bootstrap with kubeadm:
+  `docs/kubernetes-kubeadm-bootstrap.md`
+- Architecture: `docs/architecture.md`
+- Operations: `docs/operations.md`
+- GitOps structure: `gitops/README.md`
 
 ------------------------------------------------------------------------
 
@@ -28,7 +31,7 @@ Release notes follow this structure:
 
 Current release:
 
-    docs/release-notes/0.4.1.md
+    docs/release-notes/0.4.2.md
 
 ------------------------------------------------------------------------
 
@@ -39,19 +42,20 @@ GitOps reconciliation.
 
 Bootstrap includes:
 
--   Argo CD installation
--   ApplicationSet-based provider deployment
--   App-of-apps root wiring
--   MetalLB controller + CRDs (runtime configuration managed via GitOps)
--   ingress-nginx (public + private)
--   cert-manager
--   Internal CA for `*.int.blackcircuit.ca`
--   Dual external-dns providers:
-    -   RFC2136 (internal)
-    -   Cloudflare (public)
--   TSIG secret generation for internal DNS
--   Cloudflare token duplication
--   SSH repo secret handling for private Git
+- Argo CD installation
+- ApplicationSet-based provider deployment
+- App-of-apps root wiring
+- MetalLB controller + CRDs (runtime configuration managed via GitOps)
+- ingress-nginx (public + private)
+- cert-manager
+- Internal CA for `*.int.blackcircuit.ca`
+- step-ca (internal PKI service, GitOps-managed)
+- Dual external-dns providers:
+  - RFC2136 (internal)
+  - Cloudflare (public)
+- TSIG secret generation for internal DNS
+- Cloudflare token duplication
+- SSH repo secret handling for private Git
 
 Bootstrap installs prerequisites. GitOps owns everything else.
 
@@ -59,18 +63,18 @@ Bootstrap installs prerequisites. GitOps owns everything else.
 
 ## Design Principles
 
--   Deterministic cluster rebuild
--   Clear separation of bootstrap vs GitOps ownership
--   Explicit DNS authority boundaries
--   Minimal manual intervention
--   Declarative reconciliation (`policy=sync`)
--   Clean teardown capability
+- Deterministic cluster rebuild
+- Clear separation of bootstrap vs GitOps ownership
+- Explicit DNS authority boundaries
+- Minimal manual intervention
+- Declarative reconciliation (`policy=sync`)
+- Clean teardown capability
 
 ------------------------------------------------------------------------
 
 ## DNS Architecture (v0.4)
 
-DNS is no longer optional. It is part of the control plane.
+DNS is part of the control plane.
 
 ### Internal DNS
 
@@ -80,22 +84,18 @@ Zone:
 
 Authority:
 
--   BIND9 authoritative master
--   Port 5335
--   Dynamic updates via RFC2136
--   TSIG-authenticated
--   Managed by `external-dns-internal`
--   Policy: `sync`
--   TXT ownership: `internal-1`
--   IngressClass: `nginx-private`
+- BIND9 authoritative master
+- Port 5335
+- Dynamic updates via RFC2136
+- TSIG-authenticated
+- Managed by `external-dns-internal`
+- Policy: `sync`
+- TXT ownership: `internal-1`
+- IngressClass: `nginx-private`
 
 Traffic flow:
 
 Client → Pi-hole (53) → BIND (5335)
-
-Authoritative testing:
-
-    dig @pi.int.blackcircuit.ca -p 5335 host.int.blackcircuit.ca
 
 ------------------------------------------------------------------------
 
@@ -107,28 +107,53 @@ Zone:
 
 Authority:
 
--   Cloudflare
+- Cloudflare
 
 Managed by `external-dns-public`:
 
--   Policy: `sync`
--   TXT ownership: `public-1`
--   IngressClass: `nginx-public`
--   Annotation-gated publishing
-
-Public records require explicit opt-in:
-
-    external-dns.alpha.kubernetes.io/target=<tunnel-host>
-
-Example:
-
-    2ce35617-07ec-48c7-a184-0c45e645417a.cfargotunnel.com
-
-Publishing model:
-
-Client → Cloudflare Edge → Tunnel → nginx-public
+- Policy: `sync`
+- TXT ownership: `public-1`
+- IngressClass: `nginx-public`
+- Annotation-gated publishing
 
 Private IP A-record publication is prevented by design.
+
+------------------------------------------------------------------------
+
+## Internal PKI (step-ca)
+
+Version 0.4.2 deploys step-ca as an internal ACME-capable PKI service.
+
+Characteristics:
+
+- Deployed via provider ApplicationSet under `gitops/manifests/step-ca`
+- ClusterIP service (443 → 8443)
+- Static PV with `Retain` policy
+- Secrets are not GitOps-managed
+
+Required Kubernetes secret (created manually or via automation):
+
+    step-ca-secrets
+
+Required keys:
+
+- password
+- provisioner_password
+
+Data path (default static PV):
+
+    /var/lib/step-ca
+
+### Current Certificate Model
+
+Internal ingress still uses:
+
+    ClusterIssuer/int-ca
+
+The bootstrap self-signed CA remains authoritative in v0.4.2.
+
+step-ca is deployed and reachable, but cert-manager issuer cutover is deferred
+to a later point release.
 
 ------------------------------------------------------------------------
 
@@ -138,30 +163,30 @@ Bootstrap is driven by `bootstrap.py`.
 
 ### Phase: `gitops` (default)
 
--   Installs Argo CD via Helm
--   Applies root app-of-apps
--   Installs MetalLB controller
--   Applies provider ApplicationSets
--   Hands reconciliation to Argo CD
+- Installs Argo CD via Helm
+- Applies root app-of-apps
+- Installs MetalLB controller
+- Applies provider ApplicationSets
+- Hands reconciliation to Argo CD
 
 ### Phase: `ingress`
 
--   Applies ingress-related applications
--   Requires Argo CD to exist
+- Applies ingress-related applications
+- Requires Argo CD to exist
 
 ### Phase: `all`
 
--   Runs `gitops`
--   Then runs `ingress`
+- Runs `gitops`
+- Then runs `ingress`
 
 ------------------------------------------------------------------------
 
 ## Prerequisites
 
--   Running Kubernetes cluster
--   `kubectl`
--   `helm`
--   Cluster-admin privileges
+- Running Kubernetes cluster
+- `kubectl`
+- `helm`
+- Cluster-admin privileges
 
 Cluster provisioning is intentionally out of scope.
 
@@ -180,44 +205,18 @@ Optional flags:
     --phase gitops|ingress|all
     --non-interactive
 
-Bootstrap will:
-
--   Install Argo CD
--   Configure Git access
--   Generate TSIG secret for internal DNS
--   Install MetalLB
--   Deploy provider ApplicationSets
--   Allow Argo CD to reconcile the platform
-
 ------------------------------------------------------------------------
 
 ## Secrets Managed by Bootstrap
 
 These secrets are intentionally not GitOps-managed:
 
--   `argocd/repo-git-ssh`
--   `cert-manager/cloudflare-api-token`
--   `external-dns-internal/rfc2136-tsig`
+- `argocd/repo-git-ssh`
+- `cert-manager/cloudflare-api-token`
+- `external-dns-internal/rfc2136-tsig`
+- `step-ca/step-ca-secrets`
 
 Bootstrap inputs (`bootstrap/inputs/`) must be gitignored.
-
-------------------------------------------------------------------------
-
-## Certificates
-
-Internal domain:
-
-    *.int.blackcircuit.ca
-
-Internal ingress uses:
-
-    ClusterIssuer/int-ca
-
-Public ingress may use DNS01 via Cloudflare.
-
-Future evolution:
-
--   step-ca will replace the internal bootstrap CA.
 
 ------------------------------------------------------------------------
 
@@ -230,8 +229,6 @@ Without ingress:
 With internal ingress:
 
     https://argocd.int.blackcircuit.ca
-
-(Requires trusting the internal CA root.)
 
 ------------------------------------------------------------------------
 
@@ -247,10 +244,10 @@ A clean rebuild must succeed without manual intervention.
 
 ## Out of Scope
 
--   Cluster provisioning automation
--   step-ca (planned)
--   Tunnel lifecycle automation
--   Secret encryption (SOPS)
+- Cluster provisioning automation
+- Tunnel lifecycle automation
+- Secret encryption (SOPS)
+- cert-manager ACME cutover to step-ca (planned)
 
 ------------------------------------------------------------------------
 
@@ -258,4 +255,5 @@ A clean rebuild must succeed without manual intervention.
 
 Current release:
 
-    0.4.1
+    0.4.2
+

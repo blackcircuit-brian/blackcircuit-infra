@@ -1,6 +1,6 @@
 # Black Circuit Kubernetes Architecture
 
-## v0.4.0
+## v0.4.2
 
 ------------------------------------------------------------------------
 
@@ -136,6 +136,10 @@ Public and internal DNS systems are intentionally isolated.
 
 ## 4. Certificate Strategy
 
+The platform currently operates with two distinct certificate components.
+
+### 4.1 Bootstrap Internal CA (Active Issuer)
+
 Internal ingress uses:
 
     ClusterIssuer/int-ca
@@ -147,10 +151,38 @@ Characteristics:
 -   Long-lived root
 -   Stored in cert-manager namespace
 -   Used exclusively for internal domains
+-   Remains the active issuer in v0.4.2
 
-Planned evolution:
+------------------------------------------------------------------------
 
--   Replace internal CA with step-ca in a future release
+### 4.2 Internal PKI Service (step-ca)
+
+v0.4.2 introduces step-ca as a GitOps-managed internal PKI service.
+
+Characteristics:
+
+-   Deployed via ApplicationSet (providers)
+-   ACME-capable
+-   ClusterIP service (443 → 8443)
+-   Static PersistentVolume with `Retain` policy
+-   Secrets not managed in Git
+-   Fully reconciled by Argo CD
+
+step-ca is reachable in-cluster and operational, but it is not yet the
+authoritative issuer for internal ingress.
+
+------------------------------------------------------------------------
+
+### 4.3 Migration Boundary
+
+Issuer cutover from `ClusterIssuer/int-ca` to an ACME-backed issuer
+pointing at step-ca is intentionally deferred.
+
+This preserves:
+
+-   Deterministic bootstrap behavior
+-   Clear rollback boundary
+-   Operational stability during incremental evolution
 
 ------------------------------------------------------------------------
 
@@ -197,7 +229,8 @@ Planned enhancements:
 
 ------------------------------------------------------------------------
 
-## 8. Version Summary (v0.4.0)
+
+## 8. Version Summary (v0.4.2)
 
 This release introduces:
 
@@ -205,7 +238,7 @@ This release introduces:
 -   RFC2136 dynamic internal DNS with TSIG
 -   Cloudflare public DNS with annotation-gated publishing
 -   ApplicationSet-driven provider deployment
--   Full create/update/delete lifecycle via sync policy
+-   GitOps-managed internal PKI service (step-ca)
 -   Deterministic bootstrap improvements
 
 ------------------------------------------------------------------------

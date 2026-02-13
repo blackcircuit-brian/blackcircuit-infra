@@ -1,6 +1,6 @@
 # Black Circuit Kubernetes Platform
 
-## Operations Guide -- v0.4.0
+## Operations Guide -- v0.4.2
 
 ------------------------------------------------------------------------
 
@@ -136,21 +136,84 @@ Bootstrap inputs must not be committed to Git.
 
 ------------------------------------------------------------------------
 
-## 6. Certificate Operations
+
+
+## 6. Certificate & PKI Operations
+
+### 6.1 Current Issuer Model
 
 Internal certificates:
 
 -   Issuer: ClusterIssuer/int-ca
--   Used for \*.int.blackcircuit.ca
+-   Used for *.int.blackcircuit.ca
+
+The bootstrap-generated internal CA remains authoritative in v0.4.2.
 
 If internal TLS fails:
 
 1.  Check cert-manager pods
-2.  Check certificate resource
+2.  Check Certificate resource status
 3.  Confirm secret exists
-4.  Verify CA root trust
+4.  Verify CA root trust on client
+5.  Confirm ingress class alignment
 
-Future evolution: step-ca replacement.
+------------------------------------------------------------------------
+
+### 6.2 Internal PKI Service (step-ca)
+
+v0.4.2 deploys step-ca as a GitOps-managed internal PKI service.
+
+Characteristics:
+
+-   Namespace: `step-ca`
+-   Deployment managed via ApplicationSet (providers)
+-   ClusterIP service (443 → 8443)
+-   Static PersistentVolume (Retain policy)
+-   ACME endpoint enabled
+-   Secrets are not GitOps-managed
+
+Required Kubernetes secret:
+
+    step-ca-secrets
+
+Required keys:
+
+-   password
+-   provisioner_password
+
+Data path (default static PV):
+
+    /var/lib/step-ca
+
+------------------------------------------------------------------------
+
+### 6.3 Validating step-ca Health
+
+Check application status:
+
+    kubectl -n step-ca get pods
+    kubectl -n step-ca get pvc
+    kubectl -n step-ca get svc
+
+Check logs:
+
+    kubectl -n step-ca logs deploy/step-ca
+
+Validate ACME directory (from inside cluster):
+
+    curl -k https://step-ca.step-ca.svc.cluster.local/acme/k8s-int/directory
+
+Expected behavior:
+- JSON response from ACME directory
+- HTTP error types such as `accountDoesNotExist` are valid responses
+
+------------------------------------------------------------------------
+
+### 6.4 Boundary Note
+
+cert-manager does not yet use step-ca in v0.4.2.
+
+Issuer migration to ACME is planned for a subsequent release.
 
 ------------------------------------------------------------------------
 
@@ -205,9 +268,10 @@ Manual DNS edits in managed zones will be reverted.
 
 ------------------------------------------------------------------------
 
+
 ## 11. Future Improvements
 
--   step-ca integration
+-   cert-manager ACME issuer cutover to step-ca
 -   Admission control for hostname enforcement
 -   Secret encryption (SOPS)
 -   Tunnel lifecycle automation

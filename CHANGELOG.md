@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 This project follows Semantic Versioning.
 
+## [0.4.2] - 2026-02-13
+
+### Added
+
+- GitOps-managed internal PKI service (step-ca)
+- Static PersistentVolume and PVC for step-ca
+- ACME-capable configuration
+- Provider integration via ApplicationSet
+
+### Operational
+
+- step-ca deployed but not yet authoritative issuer
+- Existing ClusterIssuer/int-ca remains active
+- No ingress or cert-manager cutover performed
+
+### Notes
+
+This release introduces the internal PKI service while intentionally deferring
+ACME issuer migration to a subsequent release.
+
 ------------------------------------------------------------------------
 
 ## \[0.4.1\] - 2026-02-13
