@@ -28,7 +28,7 @@ spec:
 
           # Flip to false if you have a reason; otherwise keep enabled.
           admissionWebhooks:
-            enabled: true
+            enabled: false
 
           service:
             type: LoadBalancer
