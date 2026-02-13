@@ -43,8 +43,8 @@ spec:
               fi
 
               mkdir -p /home/step/secrets
-              cp /home/step/k8s-secrets/password /home/step/secrets/password
-              cp /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
+              cp -f /home/step/k8s-secrets/password /home/step/secrets/password
+              cp -f /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
               chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
               echo "Initializing step-ca config..."
               step ca init \
@@ -77,7 +77,7 @@ spec:
             - |
               set -euo pipefail
               mkdir -p /home/step/secrets
-              cp /home/step/k8s-secrets/password /home/step/secrets/password
+              cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               chmod 600 /home/step/secrets/password
               exec step-ca /home/step/config/ca.json --password-file /home/step/secrets/password
                     readinessProbe:
