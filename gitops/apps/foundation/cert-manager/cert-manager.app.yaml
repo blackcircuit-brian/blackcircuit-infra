@@ -5,13 +5,9 @@ metadata:
 spec:
   project: default
   source:
-    chart: cert-manager
-    repoURL: oci://quay.io/jetstack/charts/cert-manager
-    targetRevision: v1.19.3
-    helm:
-      parameters:
-        - name: crds.enabled
-          value: "true"
+    repoURL: ${GIT_REPO_URL}
+    targetRevision: ${REPO_REF}
+    path: gitops/manifests/cert-manager
   destination:
     server: https://kubernetes.default.svc
     namespace: cert-manager

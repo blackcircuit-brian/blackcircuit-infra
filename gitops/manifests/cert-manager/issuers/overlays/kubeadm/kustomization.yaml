@@ -69,14 +69,3 @@ replacements:
         fieldPaths:
           - spec.acme.solvers.0.dns01.rfc2136.tsigAlgorithm
 
-  - source:
-      kind: ConfigMap
-      name: platform-config
-      fieldPath: data.CANARY_DNSNAME
-    targets:
-      - select:
-          kind: Certificate
-          name: canary-int
-        fieldPaths:
-          - spec.dnsNames.0
-

@@ -2,5 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - clusterissuer-step-int-ca.yaml
-
+  - ../overlays/kubeadm/clusterissuer-step-int-ca.yaml
+  - ../overlays/kubeadm/clusterissuer-le-prod.yaml
+  - ../overlays/kubeadm/clusterissuer-le-staging.yaml
+  - ../overlays/kubeadm/clusterissuer-selfsigned.yaml
