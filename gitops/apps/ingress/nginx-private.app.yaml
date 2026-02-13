@@ -22,8 +22,14 @@ spec:
             default: false
             controllerValue: "k8s.io/ingress-nginx-private"
           ingressClass: nginx-private
+
+          # Hard boundary: ignore classless ingresses
+          watchIngressWithoutClass: false
+
+          # Flip to false if you have a reason; otherwise keep enabled.
           admissionWebhooks:
-            enabled: false
+            enabled: true
+
           service:
             type: LoadBalancer
             externalTrafficPolicy: Local

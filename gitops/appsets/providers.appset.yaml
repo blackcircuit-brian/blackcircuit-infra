@@ -22,6 +22,14 @@ spec:
           - name: step-ca
             namespace: step-ca
             path: gitops/manifests/step-ca
+
+          - name: cert-manager
+            namespace: cert-manager
+            path: gitops/manifests/cert-manager
+
+          - name: apps-ingress
+            namespace: argocd
+            path: gitops/apps/ingress
   template:
     metadata:
       name: "{{name}}"
