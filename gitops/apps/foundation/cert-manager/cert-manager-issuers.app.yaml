@@ -5,6 +5,8 @@ metadata:
 spec:
   project: default
   source:
+    repoURL: ${GIT_REPO_URL}
+    targetRevision: ${REPO_REF}
     path: gitops/manifests/cert-manager/issuers
   destination:
     server: https://kubernetes.default.svc
