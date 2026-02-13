@@ -43,6 +43,7 @@ spec:
               fi
 
               mkdir -p /home/step/secrets /home/step/config /home/step/db
+              chown -R 1000:1000 /home/step
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               cp -f /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
               chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
@@ -83,6 +84,7 @@ spec:
               chmod -R u+rwX /home/step
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               chmod 600 /home/step/secrets/password
+              chown 1000:1000 /home/step/secrets/password
               exec step-ca /home/step/config/ca.json --password-file /home/step/secrets/password
           readinessProbe:
             tcpSocket:
