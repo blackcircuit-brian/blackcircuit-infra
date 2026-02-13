@@ -42,10 +42,12 @@ spec:
                 exit 0
               fi
 
-              mkdir -p /home/step/secrets
+              mkdir -p /home/step/secrets /home/step/config /home/step/db
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               cp -f /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
               chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
+              chown -R 1000:1000 /home/step
+              chmod -R u+rwX /home/step
               echo "Initializing step-ca config..."
               step ca init \
                 --name "Black Circuit Internal CA" \
