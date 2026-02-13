@@ -32,12 +32,9 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, Type
 
 
 # ---- Constants & Types -------------------------------------------------------
-
-VALID_PHASES = ("gitops", "ingress", "all")
 VALID_VIS = ("public", "private")
 
 # ---- Utilities ---------------------------------------------------------------
-
 def normalize_github_repo(value: str) -> str:
     """Normalize GitHub repo input to org/repo (no .git)."""
     v = value.strip()
@@ -112,6 +109,7 @@ def _helm(ctx: Context, *args: str, check: bool = True, capture: bool = False, t
         cmd += ["--kube-context", kube_ctx]
     cmd += list(args)
     return subprocess.run(cmd, check=check, capture_output=capture, text=text)
+
 def _prompt(text: str, default: Optional[str] = None) -> str:
     suffix = f" [{default}]" if default is not None and default != "" else ""
     while True:
@@ -123,7 +121,6 @@ def _prompt(text: str, default: Optional[str] = None) -> str:
             return val
         if default is not None:
             return default
-
 
 def _prompt_bool(text: str, default: bool) -> bool:
     d = "y" if default else "n"
@@ -139,7 +136,6 @@ def _prompt_bool(text: str, default: bool) -> bool:
         if val in ("n", "no", "false", "0"):
             return False
         print("Please enter y or n.")
-
 
 def _prompt_choice(text: str, choices: tuple[str, ...], default: str) -> str:
     choices_str = "/".join(choices)
@@ -390,7 +386,6 @@ class BootstrapModule(ABC):
 
 class CoreModule(BootstrapModule):
     def add_args(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--phase", choices=VALID_PHASES, help="Override PHASE (gitops|ingress|all)")
         parser.add_argument("--ref", "--repo-ref", dest="repo_ref", help="Override REPO_REF")
 
     def run(self, ctx: Context) -> None:
@@ -401,7 +396,6 @@ class CoreModule(BootstrapModule):
         org_slug = existing.get("ORG_SLUG", "aethericforge")
         env_name = existing.get("ENV", "kubeadm")
         argo_ns = existing.get("ARGO_NAMESPACE", existing.get("ARGOCD_NAMESPACE", "argocd"))
-        phase = existing.get("PHASE", "gitops")
         apply_root = _truthy(existing.get("APPLY_ROOT_APP", "true"))
         root_app_path = existing.get("ROOT_APP_PATH", "")
         repo_vis = existing.get("REPO_VISIBILITY", "public")
@@ -409,8 +403,6 @@ class CoreModule(BootstrapModule):
         repo_ref = existing.get("REPO_REF", "main")
 
         # CLI overrides
-        if args.phase:
-            phase = args.phase
         if args.repo_ref:
             repo_ref = args.repo_ref.strip()
 
@@ -425,7 +417,6 @@ class CoreModule(BootstrapModule):
             _validate_slug(env_name, "ENV")
 
             argo_ns = _prompt("Argo CD namespace", argo_ns)
-            phase = _prompt_choice("Phase", VALID_PHASES, phase if phase in VALID_PHASES else "gitops")
             apply_root = _prompt_bool("Apply root app-of-apps", apply_root)
 
             default_root = f"gitops/clusters/{env_name}/root-app.yaml"
@@ -446,7 +437,6 @@ class CoreModule(BootstrapModule):
         ctx.set_env("ORG_SLUG", org_slug)
         ctx.set_env("ENV", env_name)
         ctx.set_env("ARGO_NAMESPACE", argo_ns)
-        ctx.set_env("PHASE", phase)
         ctx.set_env("APPLY_ROOT_APP", "true" if apply_root else "false")
         ctx.set_env("ROOT_APP_PATH", root_app_path)
         ctx.set_env("REPO_VISIBILITY", repo_vis)
@@ -726,10 +716,6 @@ class ArgoCDModule(BootstrapModule):
         ctx.set_env("ARGO_HELM_CHART_VERSION", argo_version)
         ctx.set_env("CERT_MANAGER_VERSION", cm_version)
         ctx.set_env("CERT_MANAGER_CRDS_MODE", cm_mode)
-
-        if ctx.env_values.get("PHASE") == "ingress":
-            print(">>> PHASE=ingress: skipping ArgoCD and CRD installation in this module")
-            return
 
         if not args.skip_argo_install:
             self._install_cm_crds(ctx, cm_version, cm_mode)
@@ -1013,8 +999,6 @@ def main() -> int:
     if not env_path.is_absolute():
         env_path = (repo_root / env_path).resolve()
 
-    bootstrap_sh = repo_root / "bootstrap" / "argocd" / "bootstrap.sh"
-
     ctx = Context(repo_root=repo_root, args=args, existing_env=_parse_env_file(env_path))
 
     for m in modules:
@@ -1024,7 +1008,7 @@ def main() -> int:
 
     print("\n=== Summary ===")
     print(f"Env file:        {env_path}")
-    for k in ["PHASE", "ORG_SLUG", "ENV", "ARGO_NAMESPACE", "ROOT_APP_PATH"]:
+    for k in ["ORG_SLUG", "ENV", "ARGO_NAMESPACE", "ROOT_APP_PATH"]:
         print(f"{k:<16} {ctx.env_values.get(k)}")
     if ctx.env_values.get("GITHUB_REPO"):
         print(f"REPO_VISIBILITY: {ctx.env_values.get('REPO_VISIBILITY')}")
@@ -1037,23 +1021,7 @@ def main() -> int:
     if ctx.env_values.get("SSH_KNOWN_HOSTS_FILE"):
         print(f"KNOWN_HOSTS:     {ctx.env_values.get('SSH_KNOWN_HOSTS_FILE')}")
     print("")
-
-    try:
-        run_metallb_installer(ctx)
-        
-        # Check if we should still run bootstrap.sh (for Ingress phase or if it exists)
-        if ctx.env_values.get("PHASE") in ("ingress", "all") or (repo_root / "bootstrap" / "ingress" / "install.sh").exists():
-            cmd = ["bash", str(bootstrap_sh), "--env-file", str(env_path)]
-            print(f"Running legacy bootstrap script: {' '.join(shlex.quote(c) for c in cmd)}\n")
-            subprocess.run(cmd, cwd=str(repo_root), check=True)
-        else:
-            print(">>> Bootstrap complete (Argo CD and core components handled by Python).")
-    except subprocess.CalledProcessError as e:
-        print(f"\nBootstrap failed with exit code {e.returncode}", file=sys.stderr)
-        return e.returncode
-    except Exception as e:
-        print(f"\nERROR: {e}", file=sys.stderr)
-        return 1
+    print(">>> Bootstrap complete (Argo CD and core components handled by Python).")
 
     return 0
 

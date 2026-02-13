@@ -157,30 +157,6 @@ to a later point release.
 
 ------------------------------------------------------------------------
 
-## Bootstrap Phases
-
-Bootstrap is driven by `bootstrap.py`.
-
-### Phase: `gitops` (default)
-
-- Installs Argo CD via Helm
-- Applies root app-of-apps
-- Installs MetalLB controller
-- Applies provider ApplicationSets
-- Hands reconciliation to Argo CD
-
-### Phase: `ingress`
-
-- Applies ingress-related applications
-- Requires Argo CD to exist
-
-### Phase: `all`
-
-- Runs `gitops`
-- Then runs `ingress`
-
-------------------------------------------------------------------------
-
 ## Prerequisites
 
 - Running Kubernetes cluster
@@ -202,7 +178,6 @@ Optional flags:
     --cloudflare-token-file ~/.cloudflare-token
     --rfc2136-tsig-keyname external-dns-int
     --apply-rfc2136-tsig-secret
-    --phase gitops|ingress|all
     --non-interactive
 
 ------------------------------------------------------------------------
