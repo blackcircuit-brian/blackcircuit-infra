@@ -1,11 +1,11 @@
-# Black Circuit GitOps Bootstrap (v0.4.0)
+# Black Circuit GitOps Bootstrap (v0.4.1)
 
 This repository provides a deterministic, opinionated bootstrap workflow
 for establishing a GitOps control plane in Kubernetes using Argo CD.
 
 The goal is not flexibility --- it is reproducibility.
 
-Version 0.4.0 introduces a fully automated DNS control plane with strict
+Version 0.4.0 introduced a fully automated DNS control plane with strict
 authority separation between internal and public domains.
 
 ------------------------------------------------------------------------
@@ -28,7 +28,7 @@ Release notes follow this structure:
 
 Current release:
 
-    docs/release-notes/v0.4.0.md
+    docs/release-notes/0.4.1.md
 
 ------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ Bootstrap includes:
 -   Argo CD installation
 -   ApplicationSet-based provider deployment
 -   App-of-apps root wiring
--   MetalLB controller (pools managed via GitOps)
+-   MetalLB controller + CRDs (runtime configuration managed via GitOps)
 -   ingress-nginx (public + private)
 -   cert-manager
 -   Internal CA for `*.int.blackcircuit.ca`
@@ -258,4 +258,4 @@ A clean rebuild must succeed without manual intervention.
 
 Current release:
 
-    v0.4.0
+    0.4.1

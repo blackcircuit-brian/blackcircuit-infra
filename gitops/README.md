@@ -64,3 +64,5 @@ These manifests are referenced by Applications.
 - Avoid environment-specific logic in shared manifests.
 - Do not commit secrets.
 - Maintain separation between internal and public certificate flows.
+- Controllers (CRDs + operators) may be bootstrap-installed.
+- Runtime configuration (e.g., MetalLB IP pools, issuers, ingress rules) must be GitOps-managed.
