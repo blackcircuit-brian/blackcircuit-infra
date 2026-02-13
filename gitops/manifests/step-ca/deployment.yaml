@@ -57,8 +57,7 @@ spec:
                 --provisioner "k8s-int" \
                 --password-file /home/step/secrets/password \
                 --provisioner-password-file /home/step/secrets/provisioner_password \
-                --acme \
-                --install=false
+                --acme
 
               echo "Initialization complete."
           volumeMounts:
