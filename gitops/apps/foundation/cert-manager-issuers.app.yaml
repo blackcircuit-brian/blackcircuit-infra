@@ -7,7 +7,7 @@ spec:
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra
     targetRevision: v0.3
-    path: gitops/manifests/cert-manager
+    path: gitops/manifests/cert-manager-issuers/overlays/kubeadm
   destination:
     server: https://kubernetes.default.svc
     namespace: cert-manager

@@ -1,0 +1,20 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: step-int-ca
+spec:
+  acme:
+    server: REPLACE_ACME_SERVER
+    email: REPLACE_ACME_EMAIL
+    privateKeySecretRef:
+      name: step-int-ca-account-key
+    solvers:
+      - dns01:
+          rfc2136:
+            nameserver: REPLACE_RFC2136_NAMESERVER
+            tsigKeyName: REPLACE_RFC2136_TSIG_KEYNAME
+            tsigAlgorithm: REPLACE_RFC2136_TSIG_ALGORITHM
+            tsigSecretSecretRef:
+              name: rfc2136-tsig
+              key: tsig-secret
+
