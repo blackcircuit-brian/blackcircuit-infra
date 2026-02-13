@@ -48,7 +48,7 @@ spec:
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               cp -f /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
               chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
-              chmod 1000:1000 /home/step/secrets/password /home/step/secrets/provisioner_password
+              chown 1000:1000 /home/step/secrets/password /home/step/secrets/provisioner_password
               echo "Initializing step-ca config..."
               step ca init \
                 --name "Black Circuit Internal CA" \
