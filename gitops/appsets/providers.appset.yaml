@@ -5,6 +5,8 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
+  goTemplateOptions:
+    - missingkey=zero
   generators:
     - list:
         elements:
@@ -26,7 +28,12 @@ spec:
 
           - name: cert-manager
             namespace: cert-manager
-            path: gitops/apps/cert-manager
+            repoURL: oci://quay.io/jetstack/charts
+            chart: cert-manager
+            targetRevision: v1.19.3
+            helmParameters:
+              - name: crds.enabled
+                value: "true"
 
           - name: apps-ingress
             namespace: argocd
@@ -37,20 +44,9 @@ spec:
     spec:
       project: default
       source:
-        {{- if .chart }}
-        chart: "{{.chart}}"
-        targetRevision: "{{.targetRevision}}"
-        helm:
-          parameters:
-            {{- range .helmParameters }}
-            - name: "{{.name}}"
-              value: "{{.value}}"
-            {{- end }}
-        {{- else }}
         repoURL: ssh://git@github.com/blackcircuit-brian/blackcircuit-infra.git
         targetRevision: v0.4
         path: "{{.path}}"
-        {{- end }}
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{.namespace}}"
@@ -60,3 +56,18 @@ spec:
           selfHeal: true
         syncOptions:
           - CreateNamespace=true
+  templatePatch: |
+    {{- if .chart }}
+    spec:
+      source:
+        repoURL: "{{.repoURL}}"
+        chart: "{{.chart}}"
+        targetRevision: "{{.targetRevision}}"
+        path: null
+        helm:
+          parameters:
+            {{- range .helmParameters }}
+            - name: "{{.name}}"
+              value: "{{.value}}"
+            {{- end }}
+    {{- end }}
