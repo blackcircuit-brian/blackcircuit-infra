@@ -26,15 +26,11 @@ spec:
 
           - name: cert-manager
             namespace: cert-manager
-            chart: cert-manager
-            targetRevision: v1.19.3
-            helmParameters:
-              - name: crds.enabled
-                value: "true"
+            path: gitops/apps/cert-manager
 
           - name: cert-manager-issuers
             namespace: cert-manager
-            path: gitops/manifests/cert-manager/issuers
+            path: gitops/apps/cert-manager-issuers
 
           - name: apps-ingress
             namespace: argocd
