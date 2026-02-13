@@ -28,7 +28,6 @@ spec:
             #   --from-literal=provisioner_password='...'
             secretName: step-ca-secrets
 
-
       initContainers:
         - name: init-step-ca
           image: smallstep/step-cli:0.29.0
