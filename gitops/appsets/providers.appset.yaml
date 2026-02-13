@@ -10,9 +10,14 @@ spec:
           - name: external-dns-internal
             namespace: external-dns-internal
             path: gitops/manifests/external-dns/internal
+
           - name: external-dns-public
             namespace: external-dns-public
             path: gitops/manifests/external-dns/public
+
+          - name: metallb-pools
+            namespace: metallb-system
+            path: gitops/manifests/metallb-pools
   template:
     metadata:
       name: "{{name}}"
