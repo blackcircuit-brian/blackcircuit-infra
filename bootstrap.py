@@ -16,24 +16,27 @@ Stdlib-only on purpose for OSS friendliness.
 from __future__ import annotations
 
 import argparse
+import base64
+import os
 import re
+import secrets
 import shlex
+import shutil
 import subprocess
 import sys
 import textwrap
-import os
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Type
 
-import shutil
-import base64
-import secrets
 
+# ---- Constants & Types -------------------------------------------------------
 
 VALID_PHASES = ("gitops", "ingress", "all")
 VALID_VIS = ("public", "private")
 
+# ---- Utilities ---------------------------------------------------------------
 
 def normalize_github_repo(value: str) -> str:
     """Normalize GitHub repo input to org/repo (no .git)."""
@@ -66,23 +69,18 @@ def github_clone_url(org_repo: str, visibility: str) -> str:
 
 
 def needs_ssh_known_hosts(repo_visibility: str, repo_url: str) -> bool:
-    """Return True if we should use known_hosts (SSH-based repo access)."""
-    return repo_visibility == "private" and repo_url.startswith("git@")
+    return repo_visibility == "private" or (repo_url and repo_url.startswith("git@"))
 
 
 def known_hosts_path(repo_root: Path) -> Path:
-    """Repo-local known_hosts file path."""
     return repo_root / "bootstrap" / "generated" / "known_hosts"
 
 
 def generate_known_hosts(repo_root: Path, host: str = "github.com") -> Path:
-    """Generate a repo-local known_hosts file using ssh-keyscan."""
-    if shutil.which("ssh-keyscan") is None:
-        raise RuntimeError("ssh-keyscan not found in PATH (required for private repo SSH access)")
-
     out_path = known_hosts_path(repo_root)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    print(f">>> Scanning {host} keys for known_hosts...")
     cmd = ["ssh-keyscan", "-t", "rsa,ecdsa,ed25519", host]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not proc.stdout.strip():
@@ -93,42 +91,13 @@ def generate_known_hosts(repo_root: Path, host: str = "github.com") -> Path:
     return out_path
 
 
-@dataclass
-class BootstrapConfig:
-    org_slug: str = "aethericforge"
-    env: str = "test-k3d"
-    argo_namespace: str = "argocd"
-    phase: str = "gitops"
-    apply_root_app: bool = True
-    root_app_path: str = ""  # derived if empty
-
-    # Git source (used by bootstrap.sh for root Application rendering)
-    repo_visibility: str = "public"  # public|private
-    github_repo: str = ""           # org/repo
-    repo_ref: str = "main"          # branch/tag/sha
-
-    def normalize(self) -> None:
-        if self.phase not in VALID_PHASES:
-            raise ValueError(f"Invalid PHASE: {self.phase}. Expected one of: {', '.join(VALID_PHASES)}")
-        if self.repo_visibility not in VALID_VIS:
-            raise ValueError(f"Invalid REPO_VISIBILITY: {self.repo_visibility}. Expected one of: {', '.join(VALID_VIS)}")
-
-        if not self.root_app_path.strip():
-            self.root_app_path = f"gitops/clusters/{self.env}/root-app.yaml"
-
-        self.org_slug = self.org_slug.strip()
-        self.env = self.env.strip()
-        self.argo_namespace = self.argo_namespace.strip()
-        self.phase = self.phase.strip().lower()
-        self.repo_visibility = self.repo_visibility.strip().lower()
-        self.github_repo = self.github_repo.strip()
-        self.repo_ref = self.repo_ref.strip()
-
-
 def _prompt(text: str, default: Optional[str] = None) -> str:
     suffix = f" [{default}]" if default is not None and default != "" else ""
     while True:
-        val = input(f"{text}{suffix}: ").strip()
+        try:
+            val = input(f"{text}{suffix}: ").strip()
+        except EOFError:
+            return default if default is not None else ""
         if val:
             return val
         if default is not None:
@@ -138,7 +107,10 @@ def _prompt(text: str, default: Optional[str] = None) -> str:
 def _prompt_bool(text: str, default: bool) -> bool:
     d = "y" if default else "n"
     while True:
-        val = input(f"{text} [y/n] [{d}]: ").strip().lower()
+        try:
+            val = input(f"{text} [y/n] [{d}]: ").strip().lower()
+        except EOFError:
+            return default
         if not val:
             return default
         if val in ("y", "yes", "true", "1"):
@@ -151,7 +123,10 @@ def _prompt_bool(text: str, default: bool) -> bool:
 def _prompt_choice(text: str, choices: tuple[str, ...], default: str) -> str:
     choices_str = "/".join(choices)
     while True:
-        val = input(f"{text} ({choices_str}) [{default}]: ").strip().lower()
+        try:
+            val = input(f"{text} ({choices_str}) [{default}]: ").strip().lower()
+        except EOFError:
+            return default
         if not val:
             return default
         if val in choices:
@@ -199,21 +174,18 @@ def _write_env_file(path: Path, values: Dict[str, str]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-
-
 def _generate_tsig_secret_base64(nbytes: int = 32) -> str:
     """Generate a base64 TSIG secret suitable for BIND9 (RFC2136)."""
     return base64.b64encode(secrets.token_bytes(nbytes)).decode("ascii")
 
 
 def _read_secret_file(path: Path) -> str:
-    """Read a single-line secret file, stripping whitespace/newlines."""
     return path.read_text(encoding="utf-8").strip()
 
 
 def _write_secret_file(path: Path, secret_b64: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(secret_b64.strip() + "\n", encoding="utf-8")
+    path.write_text(secret_b64, encoding="utf-8")
     os.chmod(path, 0o600)
 
 
@@ -224,24 +196,108 @@ def _emit_bind9_snippet(
     algorithm: str,
     secret_b64: str,
     zone_file: str = "/var/lib/bind/db.int.blackcircuit.ca",
+    update_policy: str | None = None,
 ) -> None:
-    """Emit a BIND9 snippet including key + zone update-policy for RFC2136."""
+    """Write a BIND9 configuration snippet for the TSIG key and update-policy."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    snippet = textwrap.dedent(f"""    key \"{keyname}\" {{
+
+    policy_block = update_policy or f"grant {keyname} zonesub ANY;"
+
+    snippet = textwrap.dedent(f"""\
+    key "{keyname}" {{
         algorithm {algorithm};
-        secret \"{secret_b64}\";
+        secret "{secret_b64}";
     }};
 
-    zone \"{zone}\" {{
+    zone "{zone}" {{
         type master;
-        file \"{zone_file}\";
+        file "{zone_file}";
         update-policy {{
-            grant {keyname} zonesub ANY;
+            {policy_block}
         }};
     }};
     """)
+
     out_path.write_text(snippet, encoding="utf-8")
     os.chmod(out_path, 0o644)
+
+
+def _ensure_namespace(namespace: str, kube_context: str | None = None) -> None:
+    """Ensure a Kubernetes namespace exists."""
+    ns_cmd = ["kubectl"]
+    if kube_context:
+        ns_cmd += ["--context", kube_context]
+    ns_cmd += ["create", "namespace", namespace, "--dry-run=client", "-o", "yaml"]
+    try:
+        ns_yaml = subprocess.run(ns_cmd, check=True, capture_output=True, text=True).stdout
+        apply_cmd = ["kubectl"]
+        if kube_context:
+            apply_cmd += ["--context", kube_context]
+        apply_cmd += ["apply", "-f", "-"]
+        subprocess.run(apply_cmd, check=True, input=ns_yaml, text=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f">>> WARNING: Failed ensuring namespace {namespace}: {e}", file=sys.stderr)
+
+
+def _apply_kube_secret(
+    namespace: str,
+    secret_name: str,
+    data: Dict[str, str],
+    labels: Dict[str, str] | None = None,
+    secret_type: str = "generic",
+    kube_context: str | None = None,
+) -> None:
+    """Create/update a Kubernetes Secret (idempotent)."""
+    _ensure_namespace(namespace, kube_context=kube_context)
+
+    print(f">>> Applying Kubernetes secret: {namespace}/{secret_name}")
+    create_cmd = ["kubectl"]
+    if kube_context:
+        create_cmd += ["--context", kube_context]
+    
+    create_cmd += ["-n", namespace, "create", "secret", secret_type, secret_name]
+    for k, v in data.items():
+        create_cmd.append(f"--from-literal={k}={v}")
+    
+    create_cmd += ["--dry-run=client", "-o", "yaml"]
+
+    try:
+        secret_yaml = subprocess.run(create_cmd, check=True, capture_output=True, text=True).stdout
+        
+        if labels:
+            # A bit hacky but works for dry-run output to add labels
+            import yaml
+            secret_obj = yaml.safe_load(secret_yaml)
+            if "metadata" not in secret_obj:
+                secret_obj["metadata"] = {}
+            if "labels" not in secret_obj["metadata"]:
+                secret_obj["metadata"]["labels"] = {}
+            secret_obj["metadata"]["labels"].update(labels)
+            secret_yaml = yaml.dump(secret_obj)
+
+        apply_cmd = ["kubectl"]
+        if kube_context:
+            apply_cmd += ["--context", kube_context]
+        apply_cmd += ["apply", "-f", "-"]
+        subprocess.run(apply_cmd, check=True, input=secret_yaml, text=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f">>> WARNING: Failed applying Secret {namespace}/{secret_name}: {e}", file=sys.stderr)
+    except ImportError:
+        # Fallback if yaml is not available (stdlib only)
+        # For simplicity in stdlib-only env, we can just use kubectl label afterwards if labels are needed
+        apply_cmd = ["kubectl"]
+        if kube_context:
+            apply_cmd += ["--context", kube_context]
+        apply_cmd += ["apply", "-f", "-"]
+        subprocess.run(apply_cmd, check=True, input=secret_yaml, text=True, capture_output=True)
+        
+        if labels:
+            for lk, lv in labels.items():
+                label_cmd = ["kubectl"]
+                if kube_context:
+                    label_cmd += ["--context", kube_context]
+                label_cmd += ["-n", namespace, "label", "secret", secret_name, f"{lk}={lv}", "--overwrite"]
+                subprocess.run(label_cmd, check=True, capture_output=True)
 
 
 def _apply_rfc2136_tsig_secret(
@@ -260,46 +316,8 @@ def _apply_rfc2136_tsig_secret(
         print(f">>> RFC2136 TSIG secret file is empty; skipping Secret apply: {secret_file}")
         return
 
-    # Ensure namespace exists
-    ns_cmd = ["kubectl"]
-    if kube_context:
-        ns_cmd += ["--context", kube_context]
-    ns_cmd += ["create", "namespace", namespace, "--dry-run=client", "-o", "yaml"]
-    try:
-        ns_yaml = subprocess.run(ns_cmd, check=True, capture_output=True, text=True).stdout
-        apply_cmd = ["kubectl"]
-        if kube_context:
-            apply_cmd += ["--context", kube_context]
-        apply_cmd += ["apply", "-f", "-"]
-        subprocess.run(apply_cmd, check=True, input=ns_yaml, text=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        print(f">>> WARNING: Failed ensuring namespace {namespace}: {e}", file=sys.stderr)
+    _apply_kube_secret(namespace, secret_name, {secret_key: secret_value}, kube_context=kube_context)
 
-    print(f">>> Creating RFC2136 TSIG secret: {namespace}/{secret_name}")
-    create_cmd = ["kubectl"]
-    if kube_context:
-        create_cmd += ["--context", kube_context]
-    create_cmd += [
-        "-n",
-        namespace,
-        "create",
-        "secret",
-        "generic",
-        secret_name,
-        f"--from-literal={secret_key}={secret_value}",
-        "--dry-run=client",
-        "-o",
-        "yaml",
-    ]
-    try:
-        secret_yaml = subprocess.run(create_cmd, check=True, capture_output=True, text=True).stdout
-        apply_cmd = ["kubectl"]
-        if kube_context:
-            apply_cmd += ["--context", kube_context]
-        apply_cmd += ["apply", "-f", "-"]
-        subprocess.run(apply_cmd, check=True, input=secret_yaml, text=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        print(f">>> WARNING: Failed creating RFC2136 TSIG Secret {namespace}/{secret_name}: {e}", file=sys.stderr)
 
 def _find_repo_root(start: Path) -> Path:
     cur = start.resolve()
@@ -321,395 +339,655 @@ def _truthy(v: str) -> bool:
     return v.strip().lower() in ("true", "1", "yes", "y")
 
 
+# ---- Module Framework --------------------------------------------------------
 
-def _run_metallb(repo_root: Path, script_path: Path, kube_context: Optional[str], version: Optional[str]) -> None:
-    """Run MetalLB bootstrap installer as a pre-step (intentionally outside PHASE).
+@dataclass
+class Context:
+    repo_root: Path
+    args: argparse.Namespace
+    existing_env: Dict[str, str]
+    env_values: Dict[str, str] = field(default_factory=dict)
+    
+    def get_existing(self, key: str, default: str = "") -> str:
+        return self.existing_env.get(key, default)
 
-    MetalLB (CRDs + controller) is installed via bootstrap to avoid GitOps/CRD lifecycle issues.
-    MetalLB configuration (IPAddressPool/L2Advertisement) should remain in GitOps-root.
-    """
-    if not script_path.exists():
-        raise RuntimeError(f"MetalLB script not found at: {script_path}")
-
-    env = dict(os.environ)
-    if kube_context:
-        env["KUBE_CONTEXT"] = kube_context
-    if version:
-        env["METALLB_CHART_VERSION"] = version
-
-    cmd = ["bash", str(script_path)]
-    print("Running MetalLB bootstrap:")
-    print("  " + " ".join(shlex.quote(c) for c in cmd))
-    if kube_context:
-        print(f"  (KUBE_CONTEXT={kube_context})")
-    if version:
-        print(f"  (METALLB_CHART_VERSION={version})")
-    print("")
-
-    subprocess.run(cmd, cwd=str(repo_root), env=env, check=True)
+    def set_env(self, key: str, value: str) -> None:
+        self.env_values[key] = value
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="bootstrap.py",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Generate an env file and run bootstrap/argocd/bootstrap.sh.",
-        epilog=textwrap.dedent(
-            """\
-            Examples:
-              ./bootstrap.py
-              ./bootstrap.py --env-file bootstrap/env/test-k3d.env
-              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive
-              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --phase all
-              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --ref v0.3
-              ./bootstrap.py --env-file bootstrap/env/test-k3d.env --non-interactive --ref v0.3 --refresh-known-hosts
-            """
-        ),
-    )
-    p.add_argument("--env-file", dest="env_file", default=None, help="Path to write/read env file (default: bootstrap/env/test-k3d.env)")
-    p.add_argument("--non-interactive", action="store_true", help="Do not prompt; fail if required values are missing")
-    p.add_argument("--phase", choices=VALID_PHASES, default=None, help="Override PHASE (gitops|ingress|all)")
-    p.add_argument("--yes", action="store_true", help="In interactive mode, accept defaults without prompting (best with --env-file)" )
-    p.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts even for private repos (dev-only escape hatch)" )
-    p.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan for github.com (overwrites cached bootstrap/generated/known_hosts)" )
-    p.add_argument("--ref", "--repo-ref", dest="repo_ref", default=None, help="Override REPO_REF (branch/tag/sha) written to env and used for Argo root app targetRevision" )
-    p.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step (CRDs + controller) before Argo bootstrap")
-    p.add_argument("--metallb-script", default=None, help="Path to MetalLB installer script (default: bootstrap/metallb.sh)")
-    p.add_argument("--metallb-version", default=None, help="Optional MetalLB chart/version forwarded to installer (env: METALLB_CHART_VERSION)")
-    p.add_argument("--kube-context", default=None, help="Optional kubectl context forwarded to installer (env: KUBE_CONTEXT)")
+class BootstrapModule(ABC):
+    @abstractmethod
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        pass
 
-    p.add_argument("--ssh-key-file", default=None, help="Path to SSH private key for ArgoCD repo access (private repos)")
-    p.add_argument("--repo-ssh-secret", default=None, help="Name of ArgoCD repository secret to create/update (default: repo-git-ssh)")
-    p.add_argument("--cloudflare-token-file", default=None, help="Path to Cloudflare API token file (for DNS-01 issuance)")
-    p.add_argument("--cloudflare-secret-name", default=None, help="Name of Cloudflare token secret (default: cloudflare-api-token)")
-    p.add_argument("--cloudflare-secret-namespace", default=None, help="Namespace for Cloudflare token secret (default: cert-manager)")
-    cf_dup = p.add_mutually_exclusive_group()
-    cf_dup.add_argument(
-        "--cloudflare-token-duplicate-namespace",
-        dest="cloudflare_token_duplicate_namespace",
-        default=None,
-        help=(
-            "If set, also create the Cloudflare API token Secret in this namespace "
-            "(in addition to --cloudflare-secret-namespace / CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE)."
-        ),
-    )
-    cf_dup.add_argument(
-        "--no-cloudflare-token-duplicate",
-        dest="cloudflare_token_duplicate_namespace",
-        action="store_const",
-        const="",
-        help="Disable duplicating the Cloudflare API token into another namespace.",
-    )
-    # RFC2136 / BIND9 dynamic updates (external-dns internal)
-    p.add_argument("--rfc2136-host", default=None, help="RFC2136 DNS server (BIND9) host/IP for internal zone updates (env: RFC2136_HOST)")
-    p.add_argument("--rfc2136-zone", default=None, help="RFC2136 zone name to manage (env: RFC2136_ZONE; e.g., int.blackcircuit.ca)")
-    p.add_argument("--rfc2136-tsig-keyname", default=None, help="TSIG key name (env: RFC2136_TSIG_KEYNAME)")
-    p.add_argument("--rfc2136-tsig-alg", default=None, help="TSIG algorithm (env: RFC2136_TSIG_ALG; e.g., hmac-sha256)")
-    p.add_argument("--rfc2136-tsig-secret-file", default=None, help="Path to file containing TSIG secret (base64) (env: RFC2136_TSIG_SECRET_FILE)")
-    p.add_argument("--rfc2136-tsig-generate", action="store_true", help="Generate TSIG secret file if missing (local-first).")
-    p.add_argument("--emit-bind9-snippet", action="store_true", help="Write a BIND9 configuration snippet for the RFC2136 TSIG key + update-policy under bootstrap/generated/bind9/.")
-    p.add_argument("--apply-rfc2136-tsig-secret", action="store_true", help="Create/update the rfc2136 TSIG Secret in Kubernetes (external-dns-internal) from the local secret file.")
-
-    return p.parse_args(argv)
+    @abstractmethod
+    def run(self, ctx: Context) -> None:
+        pass
 
 
-def main() -> int:
-    args = parse_args(sys.argv[1:])
+# ---- Feature Modules ---------------------------------------------------------
 
-    here = Path(__file__).resolve()
-    repo_root = _find_repo_root(here.parent)
+class CoreModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--phase", choices=VALID_PHASES, help="Override PHASE (gitops|ingress|all)")
+        parser.add_argument("--ref", "--repo-ref", dest="repo_ref", help="Override REPO_REF")
 
-    bootstrap_sh = repo_root / "bootstrap" / "argocd" / "bootstrap.sh"
-    if not bootstrap_sh.exists():
-        print(f"ERROR: Could not find bootstrap.sh at: {bootstrap_sh}", file=sys.stderr)
-        return 2
+    def run(self, ctx: Context) -> None:
+        args = ctx.args
+        existing = ctx.existing_env
+        
+        # Initial defaults
+        org_slug = existing.get("ORG_SLUG", "aethericforge")
+        env_name = existing.get("ENV", "kubeadm")
+        argo_ns = existing.get("ARGO_NAMESPACE", existing.get("ARGOCD_NAMESPACE", "argocd"))
+        phase = existing.get("PHASE", "gitops")
+        apply_root = _truthy(existing.get("APPLY_ROOT_APP", "true"))
+        root_app_path = existing.get("ROOT_APP_PATH", "")
+        repo_vis = existing.get("REPO_VISIBILITY", "public")
+        github_repo = existing.get("GITHUB_REPO", "")
+        repo_ref = existing.get("REPO_REF", "main")
 
-    default_env_file = repo_root / "bootstrap" / "env" / "kubeadm.env"
-    if args.env_file:
-        env_path = Path(args.env_file)
-        env_path = (repo_root / env_path).resolve() if not env_path.is_absolute() else env_path
-    else:
-        env_path = default_env_file
+        # CLI overrides
+        if args.phase:
+            phase = args.phase
+        if args.repo_ref:
+            repo_ref = args.repo_ref.strip()
 
-    existing = _parse_env_file(env_path)
-
-    cfg = BootstrapConfig(
-        org_slug=existing.get("ORG_SLUG", "aethericforge"),
-        env=existing.get("ENV", "kubeadm"),
-        argo_namespace=existing.get("ARGO_NAMESPACE", existing.get("ARGOCD_NAMESPACE", "argocd")),
-        phase=existing.get("PHASE", "gitops"),
-        apply_root_app=_truthy(existing.get("APPLY_ROOT_APP", "true")),
-        root_app_path=existing.get("ROOT_APP_PATH", ""),
-        repo_visibility=existing.get("REPO_VISIBILITY", "public"),
-        github_repo=existing.get("GITHUB_REPO", ""),
-        repo_ref=existing.get("REPO_REF", "main"),
-    )
-
-    # CLI overrides
-    if args.phase:
-        cfg.phase = args.phase
-    if args.repo_ref:
-        cfg.repo_ref = args.repo_ref.strip()
-
-    if args.non_interactive:
-        try:
-            cfg.normalize()
-            _validate_slug(cfg.org_slug, "ORG_SLUG")
-            _validate_slug(cfg.env, "ENV")
-        except Exception as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-            return 2
-    else:
-        if not args.yes:
-            print(f"Repo root: {repo_root}")
-            print(f"Bootstrap script: {bootstrap_sh}")
+        if not args.non_interactive and not args.yes:
+            print(f"Repo root: {ctx.repo_root}")
             print("")
             print("=== Bootstrap configuration ===")
-            cfg.org_slug = _prompt("Org slug (values.<org>.yaml selector)", cfg.org_slug)
-            _validate_slug(cfg.org_slug, "ORG_SLUG")
+            org_slug = _prompt("Org slug (values.<org>.yaml selector)", org_slug)
+            _validate_slug(org_slug, "ORG_SLUG")
 
-            cfg.env = _prompt("Environment name (values.<env>.yaml selector)", cfg.env)
-            _validate_slug(cfg.env, "ENV")
+            env_name = _prompt("Environment name (values.<env>.yaml selector)", env_name)
+            _validate_slug(env_name, "ENV")
 
-            cfg.argo_namespace = _prompt("Argo CD namespace", cfg.argo_namespace)
-            cfg.phase = _prompt_choice("Phase", VALID_PHASES, cfg.phase if cfg.phase in VALID_PHASES else "gitops")
-            cfg.apply_root_app = _prompt_bool("Apply root app-of-apps", cfg.apply_root_app)
+            argo_ns = _prompt("Argo CD namespace", argo_ns)
+            phase = _prompt_choice("Phase", VALID_PHASES, phase if phase in VALID_PHASES else "gitops")
+            apply_root = _prompt_bool("Apply root app-of-apps", apply_root)
 
-            default_root = f"gitops/clusters/{cfg.env}/root-app.yaml"
-            cfg.root_app_path = _prompt("Root app path", cfg.root_app_path or default_root)
+            default_root = f"gitops/clusters/{env_name}/root-app.yaml"
+            root_app_path = _prompt("Root app path", root_app_path or default_root)
 
-            cfg.repo_visibility = _prompt_choice("GitHub repo visibility", VALID_VIS, cfg.repo_visibility if cfg.repo_visibility in VALID_VIS else "public")
-            raw_repo = _prompt("GitHub repo (org/repo or URL) [optional]", cfg.github_repo)
-            try:
-                cfg.github_repo = normalize_github_repo(raw_repo) if raw_repo else ""
-            except ValueError as e:
-                print(str(e), file=sys.stderr)
-                return 2
+            repo_vis = _prompt_choice("GitHub repo visibility", VALID_VIS, repo_vis if repo_vis in VALID_VIS else "public")
+            raw_repo = _prompt("GitHub repo (org/repo or URL) [optional]", github_repo)
+            github_repo = normalize_github_repo(raw_repo) if raw_repo else ""
+            repo_ref = _prompt("Git ref (branch/tag/sha)", repo_ref)
 
-            cfg.repo_ref = _prompt("Git ref (branch/tag/sha)", cfg.repo_ref)
+        _validate_slug(org_slug, "ORG_SLUG")
+        _validate_slug(env_name, "ENV")
+        if not root_app_path.strip():
+            root_app_path = f"gitops/clusters/{env_name}/root-app.yaml"
 
-    cfg.normalize()
-    repo_url = github_clone_url(cfg.github_repo, cfg.repo_visibility)
+        repo_url = github_clone_url(github_repo, repo_vis)
+
+        ctx.set_env("ORG_SLUG", org_slug)
+        ctx.set_env("ENV", env_name)
+        ctx.set_env("ARGO_NAMESPACE", argo_ns)
+        ctx.set_env("PHASE", phase)
+        ctx.set_env("APPLY_ROOT_APP", "true" if apply_root else "false")
+        ctx.set_env("ROOT_APP_PATH", root_app_path)
+        ctx.set_env("REPO_VISIBILITY", repo_vis)
+        ctx.set_env("GITHUB_REPO", github_repo)
+        ctx.set_env("REPO_REF", repo_ref)
+        ctx.set_env("GIT_REPO_URL", repo_url)
 
 
-    # SSH key + Argo repo secret support (private repos)
-    ssh_key_file = (args.ssh_key_file or existing.get("SSH_PRIVATE_KEY_FILE", "")).strip()
-    repo_ssh_secret_name = (args.repo_ssh_secret or existing.get("REPO_SSH_SECRET_NAME", "repo-git-ssh")).strip() or "repo-git-ssh"
+class SSHModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--no-known-hosts", action="store_true", help="Skip using/generating known_hosts")
+        parser.add_argument("--refresh-known-hosts", action="store_true", help="Force re-running ssh-keyscan")
+        parser.add_argument("--ssh-key-file", help="Path to SSH private key")
+        parser.add_argument("--repo-ssh-secret", help="Name of ArgoCD repository secret")
 
-    if needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
+    def run(self, ctx: Context) -> None:
+        repo_vis = ctx.env_values.get("REPO_VISIBILITY")
+        repo_url = ctx.env_values.get("GIT_REPO_URL")
+        
+        if not needs_ssh_known_hosts(repo_vis, repo_url):
+            return
+
+        ssh_key_file = (ctx.args.ssh_key_file or ctx.get_existing("SSH_PRIVATE_KEY_FILE")).strip()
+        repo_ssh_secret_name = (ctx.args.repo_ssh_secret or ctx.get_existing("REPO_SSH_SECRET_NAME", "repo-git-ssh")).strip() or "repo-git-ssh"
+
         if not ssh_key_file:
-            # Pick a sensible default if present
             default_key = str(Path.home() / ".ssh" / "id_ed25519")
             if not Path(default_key).exists():
                 default_key = str(Path.home() / ".ssh" / "id_rsa")
-            if args.non_interactive:
-                print(
-                    "ERROR: Private repo selected but no SSH key provided. "
-                    "Use --ssh-key-file (or set SSH_PRIVATE_KEY_FILE in the env file).",
-                    file=sys.stderr,
-                )
-                return 2
-            ssh_key_file = _prompt(
-                "SSH private key file (for repo access)",
-                default_key if Path(default_key).exists() else "",
-            )
+            
+            if ctx.args.non_interactive:
+                print("ERROR: Private repo selected but no SSH key provided.", file=sys.stderr)
+                sys.exit(2)
+            
+            ssh_key_file = _prompt("SSH private key file (for repo access)", default_key if Path(default_key).exists() else "")
+
         if ssh_key_file:
             p = Path(ssh_key_file).expanduser()
             if not p.exists() or not p.is_file():
                 print(f"ERROR: SSH key file not found: {p}", file=sys.stderr)
-                return 2
+                sys.exit(2)
             ssh_key_file = str(p.resolve())
+            ctx.set_env("SSH_PRIVATE_KEY_FILE", ssh_key_file)
+            ctx.set_env("REPO_SSH_SECRET_NAME", repo_ssh_secret_name)
 
-    # Cloudflare token secret support (DNS-01 via Cloudflare)
-    cloudflare_token_file = (args.cloudflare_token_file or existing.get("CLOUDFLARE_API_TOKEN_FILE", "")).strip()
-    cloudflare_secret_name = (args.cloudflare_secret_name or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAME", "cloudflare-api-token")).strip() or "cloudflare-api-token"
-    cloudflare_secret_namespace = (args.cloudflare_secret_namespace or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", "cert-manager")).strip() or "cert-manager"
+        # known_hosts
+        kh_path = None
+        if not ctx.args.no_known_hosts:
+            kh_path = known_hosts_path(ctx.repo_root)
+            if not ctx.args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
+                ctx.set_env("SSH_KNOWN_HOSTS_FILE", str(kh_path))
+            else:
+                try:
+                    kh_path = generate_known_hosts(ctx.repo_root, "github.com")
+                    ctx.set_env("SSH_KNOWN_HOSTS_FILE", str(kh_path))
+                except Exception as e:
+                    print(f"ERROR: {e}", file=sys.stderr)
+                    sys.exit(2)
 
-
-    # RFC2136 / BIND9 (external-dns internal) inputs
-    rfc2136_host = (args.rfc2136_host or existing.get("RFC2136_HOST", "")).strip()
-    rfc2136_zone = (args.rfc2136_zone or existing.get("RFC2136_ZONE", "")).strip()
-    rfc2136_tsig_keyname = (args.rfc2136_tsig_keyname or existing.get("RFC2136_TSIG_KEYNAME", "")).strip()
-    rfc2136_tsig_alg = (args.rfc2136_tsig_alg or existing.get("RFC2136_TSIG_ALG", "")).strip()
-    rfc2136_tsig_secret_file_raw = (args.rfc2136_tsig_secret_file or existing.get("RFC2136_TSIG_SECRET_FILE", "")).strip()
-
-    rfc2136_tsig_secret_path: Path | None = None
-    if rfc2136_tsig_secret_file_raw:
-        p = Path(rfc2136_tsig_secret_file_raw).expanduser()
-        rfc2136_tsig_secret_path = (repo_root / p).resolve() if not p.is_absolute() else p
-
-    # Generate TSIG secret file if requested and missing.
-    if args.rfc2136_tsig_generate:
-        if not rfc2136_tsig_secret_path:
-            rfc2136_tsig_secret_path = (repo_root / "bootstrap" / "inputs" / "rfc2136-tsig.secret").resolve()
-            rfc2136_tsig_secret_file_raw = os.path.relpath(rfc2136_tsig_secret_path, repo_root)
-        if not rfc2136_tsig_secret_path.exists():
-            secret_b64 = _generate_tsig_secret_base64()
-            _write_secret_file(rfc2136_tsig_secret_path, secret_b64)
-            print(f">>> Generated RFC2136 TSIG secret file: {rfc2136_tsig_secret_path}")
-        else:
-            print(f">>> RFC2136 TSIG secret file exists: {rfc2136_tsig_secret_path}")
-
-    if args.emit_bind9_snippet:
-        if not (rfc2136_zone and rfc2136_tsig_keyname and rfc2136_tsig_alg and rfc2136_tsig_secret_path and rfc2136_tsig_secret_path.exists()):
-            print("WARNING: --emit-bind9-snippet requested but required RFC2136 inputs are missing (zone/keyname/alg/secret-file).", file=sys.stderr)
-        else:
-            secret_b64 = _read_secret_file(rfc2136_tsig_secret_path)
-            out_path = (repo_root / "bootstrap" / "generated" / "bind9" / "rfc2136-tsig.conf").resolve()
-            _emit_bind9_snippet(out_path, rfc2136_zone, rfc2136_tsig_keyname, rfc2136_tsig_alg, secret_b64)
-            print(f">>> Wrote BIND9 snippet: {out_path}")
-
-
-    # Optional: also materialize the same token Secret in another namespace (e.g., external-dns-public).
-    # Precedence: CLI flag (including explicit empty via --no-cloudflare-token-duplicate) > existing env file > unset.
-    cloudflare_dup_was_set = (
-        args.cloudflare_token_duplicate_namespace is not None
-        or "CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE" in existing
-    )
-    cloudflare_token_duplicate_namespace = (
-        args.cloudflare_token_duplicate_namespace
-        if args.cloudflare_token_duplicate_namespace is not None
-        else existing.get("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", "").strip()
-    )
-
-    if cloudflare_token_file:
-        p = Path(cloudflare_token_file).expanduser()
-        if not p.exists() or not p.is_file():
-            print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
-            return 2
-        cloudflare_token_file = str(p.resolve())
-
-
-    # known_hosts cache-first behavior for private SSH repos
-    known_hosts_file = ""
-    known_hosts_source = ""
-    if not args.no_known_hosts and needs_ssh_known_hosts(cfg.repo_visibility, repo_url):
-        kh_path = known_hosts_path(repo_root)
-        if not args.refresh_known_hosts and kh_path.exists() and kh_path.stat().st_size > 0:
-            known_hosts_file = str(kh_path)
-            known_hosts_source = "cached"
-        else:
+        # Apply Kubernetes Secret
+        if ssh_key_file:
+            print(f">>> Applying ArgoCD repo secret: {repo_ssh_secret_name}")
+            ssh_key_content = Path(ssh_key_file).read_text(encoding="utf-8").strip()
+            kh_content = ""
+            if kh_path and kh_path.exists():
+                kh_content = kh_path.read_text(encoding="utf-8").strip()
+            
+            data = {
+                "type": "git",
+                "url": repo_url,
+                "sshPrivateKey": ssh_key_content,
+            }
+            if kh_content:
+                data["sshKnownHosts"] = kh_content
+            
+            labels = {"argocd.argoproj.io/secret-type": "repository"}
+            argo_ns = ctx.env_values.get("ARGO_NAMESPACE", "argocd")
+            kube_ctx = getattr(ctx.args, "kube_context", None)
+            
+            _apply_kube_secret(
+                namespace=argo_ns,
+                secret_name=repo_ssh_secret_name,
+                data=data,
+                labels=labels,
+                kube_context=kube_ctx
+            )
+            
+            print(f">>> Restarting argocd-repo-server to pick up repo secret changes")
+            rollout_cmd = ["kubectl"]
+            if kube_ctx:
+                rollout_cmd += ["--context", kube_ctx]
+            rollout_cmd += ["-n", argo_ns, "rollout", "restart", "deploy/argocd-repo-server"]
             try:
-                kh = generate_known_hosts(repo_root, "github.com")
-                known_hosts_file = str(kh)
-                known_hosts_source = "generated"
-            except Exception as e:
-                print(f"ERROR: {e}", file=sys.stderr)
-                return 2
+                subprocess.run(rollout_cmd, check=True, capture_output=True)
+                
+                status_cmd = ["kubectl"]
+                if kube_ctx:
+                    status_cmd += ["--context", kube_ctx]
+                status_cmd += ["-n", argo_ns, "rollout", "status", "deploy/argocd-repo-server", "--timeout=120s"]
+                subprocess.run(status_cmd, check=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                print(f">>> WARNING: Failed restarting argocd-repo-server: {e}", file=sys.stderr)
 
-    env_values: Dict[str, str] = {
-        "ORG_SLUG": cfg.org_slug,
-        "ENV": cfg.env,
-        "ARGO_NAMESPACE": cfg.argo_namespace,
-        "PHASE": cfg.phase,
-        "APPLY_ROOT_APP": "true" if cfg.apply_root_app else "false",
-        "ROOT_APP_PATH": cfg.root_app_path,
-        "REPO_VISIBILITY": cfg.repo_visibility,
-        "GITHUB_REPO": cfg.github_repo,
-        "REPO_REF": cfg.repo_ref,
-        "GIT_REPO_URL": repo_url,
-    }
 
-    if needs_ssh_known_hosts(cfg.repo_visibility, repo_url) and ssh_key_file:
-        env_values["SSH_PRIVATE_KEY_FILE"] = ssh_key_file
-        env_values["REPO_SSH_SECRET_NAME"] = repo_ssh_secret_name
+class CloudflareModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--cloudflare-token-file", help="Path to Cloudflare API token file")
+        parser.add_argument("--cloudflare-secret-name", help="Name of Cloudflare token secret")
+        parser.add_argument("--cloudflare-secret-namespace", help="Namespace for Cloudflare token secret")
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--cloudflare-token-duplicate-namespace", help="Duplicate secret to this namespace")
+        group.add_argument("--no-cloudflare-token-duplicate", action="store_true", help="Disable duplicating secret")
 
-    if cloudflare_token_file:
-        env_values["CLOUDFLARE_API_TOKEN_FILE"] = cloudflare_token_file
-        env_values["CLOUDFLARE_API_TOKEN_SECRET_NAME"] = cloudflare_secret_name
-        env_values["CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE"] = cloudflare_secret_namespace
-        # Preserve an explicit setting (including empty) so the env file remains stable across runs.
-        if cloudflare_dup_was_set:
-            env_values["CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE"] = cloudflare_token_duplicate_namespace
+    def run(self, ctx: Context) -> None:
+        args = ctx.args
+        existing = ctx.existing_env
 
-    if known_hosts_file:
-        env_values["SSH_KNOWN_HOSTS_FILE"] = known_hosts_file
+        token_file = (args.cloudflare_token_file or existing.get("CLOUDFLARE_API_TOKEN_FILE", "")).strip()
+        secret_name = (args.cloudflare_secret_name or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAME", "cloudflare-api-token")).strip() or "cloudflare-api-token"
+        secret_ns = (args.cloudflare_secret_namespace or existing.get("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", "cert-manager")).strip() or "cert-manager"
+        
+        dup_was_set = args.cloudflare_token_duplicate_namespace is not None or "CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE" in existing
+        dup_ns = args.cloudflare_token_duplicate_namespace if args.cloudflare_token_duplicate_namespace is not None else existing.get("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", "").strip()
 
-    # MetalLB bootstrap metadata (informational; not GitOps-managed)
-    if args.with_metallb:
-        env_values["METALLB_ENABLED"] = "true"
-        if args.metallb_version:
-            env_values["METALLB_CHART_VERSION"] = args.metallb_version
-    # Persist RFC2136 inputs if provided (so out-of-band BIND9 config remains captured/repeatable).
-    rfc_was_set = (
-        args.rfc2136_host is not None
-        or args.rfc2136_zone is not None
-        or args.rfc2136_tsig_keyname is not None
-        or args.rfc2136_tsig_alg is not None
-        or args.rfc2136_tsig_secret_file is not None
-        or args.rfc2136_tsig_generate
-        or "RFC2136_HOST" in existing
-        or "RFC2136_ZONE" in existing
-        or "RFC2136_TSIG_KEYNAME" in existing
-        or "RFC2136_TSIG_ALG" in existing
-        or "RFC2136_TSIG_SECRET_FILE" in existing
+        if token_file:
+            p = Path(token_file).expanduser()
+            if not p.exists() or not p.is_file():
+                print(f"ERROR: Cloudflare token file not found: {p}", file=sys.stderr)
+                sys.exit(2)
+            token_file = str(p.resolve())
+            
+            ctx.set_env("CLOUDFLARE_API_TOKEN_FILE", token_file)
+            ctx.set_env("CLOUDFLARE_API_TOKEN_SECRET_NAME", secret_name)
+            ctx.set_env("CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE", secret_ns)
+            if dup_was_set:
+                ctx.set_env("CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE", dup_ns)
+
+            # Apply Kubernetes Secret
+            token = p.read_text(encoding="utf-8").strip()
+            if not token:
+                print(f"ERROR: Cloudflare token file is empty: {p}", file=sys.stderr)
+                sys.exit(2)
+            
+            kube_ctx = getattr(args, "kube_context", None)
+            
+            # Primary namespace
+            _apply_kube_secret(
+                namespace=secret_ns,
+                secret_name=secret_name,
+                data={"api-token": token},
+                kube_context=kube_ctx
+            )
+            
+            # Duplicate namespace
+            if dup_ns and dup_ns != secret_ns:
+                _apply_kube_secret(
+                    namespace=dup_ns,
+                    secret_name=secret_name,
+                    data={"api-token": token},
+                    kube_context=kube_ctx
+                )
+
+
+class RFC2136Module(BootstrapModule):
+    def __init__(self, prefix: str = "", env_prefix: str = "", description: str = "RFC2136"):
+        self.prefix = prefix
+        self.env_prefix = env_prefix
+        self.description = description
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        p = self.prefix
+        parser.add_argument(f"--{p}rfc2136-host", help=f"{self.description} host")
+        if p == "cm-":
+            parser.add_argument(f"--{p}rfc2136-port", help=f"{self.description} port")
+        parser.add_argument(f"--{p}rfc2136-zone", help=f"{self.description} zone")
+        parser.add_argument(f"--{p}rfc2136-tsig-keyname", help=f"{self.description} TSIG key name")
+        parser.add_argument(f"--{p}rfc2136-tsig-alg", help=f"{self.description} TSIG algorithm")
+        parser.add_argument(f"--{p}rfc2136-tsig-secret-file", help=f"{self.description} TSIG secret file")
+        parser.add_argument(f"--{p}rfc2136-tsig-generate", action="store_true", help=f"Generate {self.description} secret")
+        parser.add_argument(f"--{p}emit-bind9-snippet", action="store_true", help=f"Emit BIND9 snippet for {self.description}")
+        parser.add_argument(f"--{p}apply-rfc2136-tsig-secret", action="store_true", help=f"Apply K8s secret for {self.description}")
+
+    def run(self, ctx: Context) -> None:
+        args = ctx.args
+        existing = ctx.existing_env
+        p = self.prefix.replace("-", "_")
+        ep = self.env_prefix
+
+        host = (getattr(args, f"{p}rfc2136_host") or existing.get(f"{ep}RFC2136_HOST", "")).strip()
+        zone = (getattr(args, f"{p}rfc2136_zone") or existing.get(f"{ep}RFC2136_ZONE", "")).strip()
+        keyname = (getattr(args, f"{p}rfc2136_tsig_keyname") or existing.get(f"{ep}RFC2136_TSIG_KEYNAME", "")).strip()
+        alg = (getattr(args, f"{p}rfc2136_tsig_alg") or existing.get(f"{ep}RFC2136_TSIG_ALG", "")).strip()
+        secret_file_raw = (getattr(args, f"{p}rfc2136_tsig_secret_file") or existing.get(f"{ep}RFC2136_TSIG_SECRET_FILE", "")).strip()
+
+        port = ""
+        if hasattr(args, f"{p}rfc2136_port"):
+            port = (getattr(args, f"{p}rfc2136_port") or existing.get(f"{ep}RFC2136_PORT", "5335")).strip()
+
+        secret_path: Path | None = None
+        if secret_file_raw:
+            path = Path(secret_file_raw).expanduser()
+            secret_path = (ctx.repo_root / path).resolve() if not path.is_absolute() else path
+
+        # Generate
+        if getattr(args, f"{p}rfc2136_tsig_generate"):
+            if not secret_path:
+                fname = "rfc2136-tsig.secret" if not self.prefix else f"{self.prefix}rfc2136-tsig.secret"
+                secret_path = (ctx.repo_root / "bootstrap" / "inputs" / fname).resolve()
+                secret_file_raw = os.path.relpath(secret_path, ctx.repo_root)
+            if not secret_path.exists():
+                secret_b64 = _generate_tsig_secret_base64()
+                _write_secret_file(secret_path, secret_b64)
+                print(f">>> Generated {self.description} TSIG secret file: {secret_path}")
+            else:
+                print(f">>> {self.description} TSIG secret file exists: {secret_path}")
+
+        # Emit BIND9
+        if getattr(args, f"{p}emit_bind9_snippet"):
+            if not (zone and keyname and alg and secret_path and secret_path.exists()):
+                print(f"WARNING: Missing inputs for {self.description} BIND snippet.", file=sys.stderr)
+            else:
+                secret_b64 = _read_secret_file(secret_path)
+                fname = "rfc2136-tsig.conf" if not self.prefix else f"{self.prefix}rfc2136-tsig.conf"
+                out_path = (ctx.repo_root / "bootstrap" / "generated" / "bind9" / fname).resolve()
+                policy = None
+                if self.prefix == "cm-":
+                    policy = f'grant {keyname} name _acme-challenge.*.{zone}. TXT;'
+                _emit_bind9_snippet(out_path, zone, keyname, alg, secret_b64, update_policy=policy)
+                print(f">>> Wrote {self.description} BIND9 snippet: {out_path}")
+
+        # Apply K8s Secret
+        if getattr(args, f"{p}apply_rfc2136_tsig_secret") and secret_path and secret_path.exists():
+            if self.prefix == "cm-":
+                ns, name, key = "cert-manager", "rfc2136-tsig", "tsig-secret"
+            else:
+                ns = (existing.get("RFC2136_TSIG_SECRET_NAMESPACE", "external-dns-internal")).strip()
+                name = (existing.get("RFC2136_TSIG_SECRET_NAME", "rfc2136-tsig")).strip()
+                key = (existing.get("RFC2136_TSIG_SECRET_KEY", "tsig-secret")).strip()
+            
+            kube_ctx = getattr(args, "kube_context", None)
+            _apply_rfc2136_tsig_secret(ns, name, key, secret_path, kube_context=kube_ctx)
+
+        # Set Env Values
+        was_set = any([
+            getattr(args, f"{p}rfc2136_host") is not None,
+            getattr(args, f"{p}rfc2136_zone") is not None,
+            getattr(args, f"{p}rfc2136_tsig_keyname") is not None,
+            getattr(args, f"{p}rfc2136_tsig_alg") is not None,
+            getattr(args, f"{p}rfc2136_tsig_secret_file") is not None,
+            getattr(args, f"{p}rfc2136_tsig_generate"),
+            f"{ep}RFC2136_HOST" in existing
+        ])
+        if was_set:
+            if host: ctx.set_env(f"{ep}RFC2136_HOST", host)
+            if port: ctx.set_env(f"{ep}RFC2136_PORT", port)
+            if zone: ctx.set_env(f"{ep}RFC2136_ZONE", zone)
+            if keyname: ctx.set_env(f"{ep}RFC2136_TSIG_KEYNAME", keyname)
+            if alg: ctx.set_env(f"{ep}RFC2136_TSIG_ALG", alg)
+            if secret_file_raw: ctx.set_env(f"{ep}RFC2136_TSIG_SECRET_FILE", secret_file_raw)
+
+
+class ArgoCDModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--argo-version", help="Argo CD Helm chart version")
+        parser.add_argument("--skip-argo-install", action="store_true", help="Skip Argo CD installation")
+        parser.add_argument("--cm-crds-version", help="cert-manager version for CRDs")
+        parser.add_argument("--cm-crds-mode", choices=["release", "helm-template"], help="How to install cert-manager CRDs")
+
+    def run(self, ctx: Context) -> None:
+        args = ctx.args
+        existing = ctx.existing_env
+        
+        argo_version = (args.argo_version or existing.get("ARGO_HELM_CHART_VERSION", "7.7.12")).strip()
+        cm_version = (args.cm_crds_version or existing.get("CERT_MANAGER_VERSION", "v1.14.4")).strip()
+        cm_mode = (args.cm_crds_mode or existing.get("CERT_MANAGER_CRDS_MODE", "release")).strip()
+        
+        ctx.set_env("ARGO_HELM_CHART_VERSION", argo_version)
+        ctx.set_env("CERT_MANAGER_VERSION", cm_version)
+        ctx.set_env("CERT_MANAGER_CRDS_MODE", cm_mode)
+
+        if ctx.env_values.get("PHASE") == "ingress":
+            print(">>> PHASE=ingress: skipping ArgoCD and CRD installation in this module")
+            return
+
+        if not args.skip_argo_install:
+            self._install_cm_crds(ctx, cm_version, cm_mode)
+            self._install_argo(ctx, argo_version)
+
+        if ctx.env_values.get("APPLY_ROOT_APP") == "true":
+            self._apply_root_app(ctx)
+
+    def _install_cm_crds(self, ctx: Context, version: str, mode: str) -> None:
+        print(f">>> Installing cert-manager CRDs only ({version}, mode={mode})")
+        kube_ctx = getattr(ctx.args, "kube_context", None)
+        _ensure_namespace("cert-manager", kube_context=kube_ctx)
+
+        if mode == "release":
+            url = f"https://github.com/cert-manager/cert-manager/releases/download/{version}/cert-manager.crds.yaml"
+            cmd = ["kubectl"]
+            if kube_ctx:
+                cmd += ["--context", kube_ctx]
+            cmd += ["apply", "-f", url]
+            subprocess.run(cmd, check=True)
+        elif mode == "helm-template":
+            repo_cmd = ["helm", "repo", "add", "jetstack", "https://charts.jetstack.io"]
+            subprocess.run(repo_cmd, check=True, capture_output=True)
+            subprocess.run(["helm", "repo", "update"], check=True, capture_output=True)
+            
+            template_cmd = [
+                "helm", "template", "cert-manager-crds", "jetstack/cert-manager",
+                "--version", version.lstrip("v"),
+                "--namespace", "cert-manager",
+                "--include-crds"
+            ]
+            template_proc = subprocess.run(template_cmd, check=True, capture_output=True, text=True)
+            
+            apply_cmd = ["kubectl"]
+            if kube_ctx:
+                apply_cmd += ["--context", kube_ctx]
+            apply_cmd += ["apply", "-f", "-"]
+            subprocess.run(apply_cmd, check=True, input=template_proc.stdout, text=True)
+        
+        print(">>> Waiting for cert-manager CRDs to be Established")
+        get_cmd = ["kubectl", "get", "crd", "-o", "name"]
+        if kube_ctx:
+            get_cmd = ["kubectl", "--context", kube_ctx, "get", "crd", "-o", "name"]
+        
+        res = subprocess.run(get_cmd, check=True, capture_output=True, text=True)
+        cm_crds = [line for line in res.stdout.splitlines() if line.endswith(".cert-manager.io")]
+        
+        if cm_crds:
+            wait_cmd = ["kubectl"]
+            if kube_ctx:
+                wait_cmd += ["--context", kube_ctx]
+            wait_cmd += ["wait", "--for=condition=Established", "--timeout=60s"] + cm_crds
+            subprocess.run(wait_cmd, check=True, capture_output=True)
+
+    def _install_argo(self, ctx: Context, version: str) -> None:
+        argo_ns = ctx.env_values.get("ARGO_NAMESPACE", "argocd")
+        print(f">>> Installing Argo CD via Helm (chart {version}) into namespace {argo_ns}")
+        
+        subprocess.run(["helm", "repo", "add", "argo", "https://argoproj.github.io/argo-helm"], check=True, capture_output=True)
+        subprocess.run(["helm", "repo", "update"], check=True, capture_output=True)
+        
+        kube_ctx = getattr(ctx.args, "kube_context", None)
+        _ensure_namespace(argo_ns, kube_context=kube_ctx)
+
+        # Build Helm values arguments
+        values_args = []
+        repo_root = ctx.repo_root
+        org_slug = ctx.env_values.get("ORG_SLUG")
+        env_name = ctx.env_values.get("ENV")
+        
+        base_v = repo_root / "bootstrap" / "argocd" / "values.yaml"
+        org_v = repo_root / "bootstrap" / "argocd" / f"values.{org_slug}.yaml"
+        env_v = repo_root / "bootstrap" / "argocd" / f"values.{env_name}.yaml"
+        
+        if base_v.exists():
+            values_args += ["-f", str(base_v)]
+        if org_v.exists():
+            values_args += ["-f", str(org_v)]
+        if env_v.exists():
+            values_args += ["-f", str(env_v)]
+            
+        upgrade_cmd = ["helm"]
+        if kube_ctx:
+            # Helm doesn't have a global --context like kubectl, it uses --kube-context
+            upgrade_cmd += ["--kube-context", kube_ctx]
+            
+        upgrade_cmd += [
+            "upgrade", "--install", "argocd", "argo/argo-cd",
+            "--namespace", argo_ns,
+            "--create-namespace",
+            "--version", version,
+            "--set", "dex.enabled=false",
+            "--wait"
+        ] + values_args
+        
+        subprocess.run(upgrade_cmd, check=True)
+        print(">>> Argo CD install complete")
+
+    def _apply_root_app(self, ctx: Context) -> None:
+        root_app_path = ctx.env_values.get("ROOT_APP_PATH")
+        if not root_app_path:
+            return
+            
+        p = ctx.repo_root / root_app_path
+        if not p.exists():
+            print(f"ERROR: root app not found at {p}", file=sys.stderr)
+            sys.exit(1)
+            
+        # Check if it's empty or doesn't have a kind
+        content = p.read_text(encoding="utf-8")
+        if not re.search(r"kind:\s*\S+", content):
+            print(f">>> Root app {root_app_path} is empty; skipping apply.")
+            return
+
+        print(f">>> Applying root app: {root_app_path}")
+        kube_ctx = getattr(ctx.args, "kube_context", None)
+        apply_cmd = ["kubectl"]
+        if kube_ctx:
+            apply_cmd += ["--context", kube_ctx]
+        apply_cmd += ["apply", "-f", str(p)]
+        subprocess.run(apply_cmd, check=True)
+        print(">>> Root app applied.")
+
+
+class ValidationModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--skip-validation", action="store_true", help="Skip tool and connectivity validation")
+
+    def run(self, ctx: Context) -> None:
+        if ctx.args.skip_validation:
+            return
+
+        print(">>> Running pre-flight validation")
+        self._check_tools(["kubectl", "helm"])
+        self._check_kube_connectivity(ctx)
+
+    def _check_tools(self, tools: List[str]) -> None:
+        for tool in tools:
+            if not shutil.which(tool):
+                print(f"ERROR: '{tool}' not found in PATH. Please install it.", file=sys.stderr)
+                sys.exit(1)
+            print(f"  ✓ {tool} found")
+
+    def _check_kube_connectivity(self, ctx: Context) -> None:
+        cmd = ["kubectl"]
+        kube_ctx = getattr(ctx.args, "kube_context", None)
+        if kube_ctx:
+            cmd += ["--context", kube_ctx]
+        cmd += ["cluster-info"]
+        
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            context_str = kube_ctx if kube_ctx else "default"
+            print(f"  ✓ Kubernetes connectivity verified (context: {context_str})")
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: Failed to connect to Kubernetes: {e.stderr}", file=sys.stderr)
+            sys.exit(1)
+
+
+class MetalLBModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step")
+        parser.add_argument("--metallb-script", help="Path to MetalLB installer script")
+        parser.add_argument("--metallb-version", help="Optional MetalLB chart/version")
+
+    def run(self, ctx: Context) -> None:
+        if ctx.args.with_metallb:
+            ctx.set_env("METALLB_ENABLED", "true")
+            if ctx.args.metallb_version:
+                ctx.set_env("METALLB_CHART_VERSION", ctx.args.metallb_version)
+
+
+def run_metallb_installer(ctx: Context) -> None:
+    if not ctx.args.with_metallb:
+        return
+    
+    default_mb = ctx.repo_root / "bootstrap" / "metallb" / "metallb.sh"
+    mb_script = Path(ctx.args.metallb_script) if ctx.args.metallb_script else default_mb
+    mb_script = (ctx.repo_root / mb_script).resolve() if not mb_script.is_absolute() else mb_script
+    
+    if not mb_script.exists():
+        raise RuntimeError(f"MetalLB script not found at: {mb_script}")
+
+    env = dict(os.environ)
+    if ctx.args.kube_context:
+        env["KUBE_CONTEXT"] = ctx.args.kube_context
+    if ctx.args.metallb_version:
+        env["METALLB_CHART_VERSION"] = ctx.args.metallb_version
+
+    cmd = ["bash", str(mb_script)]
+    print(f"Running MetalLB bootstrap: {' '.join(shlex.quote(c) for c in cmd)}\n")
+    subprocess.run(cmd, cwd=str(ctx.repo_root), env=env, check=True)
+
+
+# ---- Main --------------------------------------------------------------------
+
+def main() -> int:
+    modules: List[BootstrapModule] = [
+        ValidationModule(),
+        CoreModule(),
+        SSHModule(),
+        CloudflareModule(),
+        RFC2136Module(description="RFC2136 (external-dns)"),
+        RFC2136Module(prefix="cm-", env_prefix="CM_", description="RFC2136 (cert-manager)"),
+        ArgoCDModule(),
+        MetalLBModule(),
+    ]
+
+    p = argparse.ArgumentParser(
+        prog="bootstrap.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Generate an env file and run bootstrap/argocd/bootstrap.sh.",
     )
-    if rfc_was_set:
-        if rfc2136_host:
-            env_values["RFC2136_HOST"] = rfc2136_host
-        if rfc2136_zone:
-            env_values["RFC2136_ZONE"] = rfc2136_zone
-        if rfc2136_tsig_keyname:
-            env_values["RFC2136_TSIG_KEYNAME"] = rfc2136_tsig_keyname
-        if rfc2136_tsig_alg:
-            env_values["RFC2136_TSIG_ALG"] = rfc2136_tsig_alg
-        if rfc2136_tsig_secret_file_raw:
-            env_values["RFC2136_TSIG_SECRET_FILE"] = rfc2136_tsig_secret_file_raw
+    p.add_argument("--env-file", help="Path to write/read env file")
+    p.add_argument("--env-name", help="Name of environment (resolves to bootstrap/env/<name>.env)")
+    p.add_argument("--non-interactive", action="store_true", help="Do not prompt")
+    p.add_argument("--yes", action="store_true", help="Accept defaults without prompting")
+    p.add_argument("--kube-context", help="Optional kubectl context")
 
-    # Optionally apply the Kubernetes Secret for external-dns-internal.
-    if args.apply_rfc2136_tsig_secret and rfc2136_tsig_secret_path and rfc2136_tsig_secret_path.exists():
-        secret_ns = (existing.get("RFC2136_TSIG_SECRET_NAMESPACE", "external-dns-internal") or "external-dns-internal").strip()
-        secret_name = (existing.get("RFC2136_TSIG_SECRET_NAME", "rfc2136-tsig") or "rfc2136-tsig").strip()
-        secret_key = (existing.get("RFC2136_TSIG_SECRET_KEY", "tsig-secret") or "tsig-secret").strip()
-        kube_ctx = getattr(args, "context", None) or getattr(args, "kube_context", None)
-        _apply_rfc2136_tsig_secret(secret_ns, secret_name, secret_key, rfc2136_tsig_secret_path, kube_context=kube_ctx)
+    for m in modules:
+        m.add_args(p)
+    
+    args = p.parse_args()
 
+    here = Path(__file__).resolve()
+    repo_root = _find_repo_root(here.parent)
+    
+    # Environment file resolution
+    if args.env_name:
+        env_path = repo_root / "bootstrap" / "env" / f"{args.env_name}.env"
+    elif args.env_file:
+        env_path = Path(args.env_file)
+    else:
+        env_path = repo_root / "bootstrap" / "env" / "kubeadm.env"
 
-    _write_env_file(env_path, env_values)
+    if not env_path.is_absolute():
+        env_path = (repo_root / env_path).resolve()
+
+    bootstrap_sh = repo_root / "bootstrap" / "argocd" / "bootstrap.sh"
+
+    ctx = Context(repo_root=repo_root, args=args, existing_env=_parse_env_file(env_path))
+
+    for m in modules:
+        m.run(ctx)
+
+    _write_env_file(env_path, ctx.env_values)
 
     print("\n=== Summary ===")
     print(f"Env file:        {env_path}")
-    print(f"PHASE:           {cfg.phase}")
-    print(f"ORG_SLUG:        {cfg.org_slug}")
-    print(f"ENV:             {cfg.env}")
-    print(f"ARGO_NAMESPACE:  {cfg.argo_namespace}")
-    print(f"ROOT_APP_PATH:   {cfg.root_app_path}")
-    if cfg.github_repo:
-        print(f"REPO_VISIBILITY: {cfg.repo_visibility}")
-        print(f"GITHUB_REPO:     {cfg.github_repo}")
-        print(f"REPO_REF:        {cfg.repo_ref}")
-        if repo_url:
-            print(f"GIT_REPO_URL:    {repo_url}")
+    for k in ["PHASE", "ORG_SLUG", "ENV", "ARGO_NAMESPACE", "ROOT_APP_PATH"]:
+        print(f"{k:<16} {ctx.env_values.get(k)}")
+    if ctx.env_values.get("GITHUB_REPO"):
+        print(f"REPO_VISIBILITY: {ctx.env_values.get('REPO_VISIBILITY')}")
+        print(f"GITHUB_REPO:     {ctx.env_values.get('GITHUB_REPO')}")
+        print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
+        print(f"GIT_REPO_URL:    {ctx.env_values.get('GIT_REPO_URL')}")
     else:
-        print("GITHUB_REPO:     (not set)")
-        print(f"REPO_REF:        {cfg.repo_ref}")
-    if known_hosts_file:
-        suffix = f" ({known_hosts_source})" if known_hosts_source else ""
-        print(f"KNOWN_HOSTS:     {known_hosts_file}{suffix}")
-    print("")
-
-    cmd = ["bash", str(bootstrap_sh), "--env-file", str(env_path)]
-    print("Running:")
-    print("  " + " ".join(shlex.quote(c) for c in cmd))
+        print(f"GITHUB_REPO:     (not set)")
+        print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
+    if ctx.env_values.get("SSH_KNOWN_HOSTS_FILE"):
+        print(f"KNOWN_HOSTS:     {ctx.env_values.get('SSH_KNOWN_HOSTS_FILE')}")
     print("")
 
     try:
-        # Optional, explicit pre-step. Kept out of PHASE intentionally.
-        if args.with_metallb:
-            default_mb = repo_root / "bootstrap" / "metallb" / "metallb.sh"
-            mb_script = Path(args.metallb_script) if args.metallb_script else default_mb
-            mb_script = (repo_root / mb_script).resolve() if not mb_script.is_absolute() else mb_script
-            _run_metallb(
-                repo_root=repo_root,
-                script_path=mb_script,
-                kube_context=args.kube_context,
-                version=args.metallb_version,
-            )
-
-        subprocess.run(cmd, cwd=str(repo_root), check=True)
+        run_metallb_installer(ctx)
+        
+        # Check if we should still run bootstrap.sh (for Ingress phase or if it exists)
+        if ctx.env_values.get("PHASE") in ("ingress", "all") or (repo_root / "bootstrap" / "ingress" / "install.sh").exists():
+            cmd = ["bash", str(bootstrap_sh), "--env-file", str(env_path)]
+            print(f"Running legacy bootstrap script: {' '.join(shlex.quote(c) for c in cmd)}\n")
+            subprocess.run(cmd, cwd=str(repo_root), check=True)
+        else:
+            print(">>> Bootstrap complete (Argo CD and core components handled by Python).")
     except subprocess.CalledProcessError as e:
         print(f"\nBootstrap failed with exit code {e.returncode}", file=sys.stderr)
         return e.returncode
+    except Exception as e:
+        print(f"\nERROR: {e}", file=sys.stderr)
+        return 1
 
     return 0
 
