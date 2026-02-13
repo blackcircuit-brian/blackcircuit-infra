@@ -74,19 +74,33 @@ install_cert_manager_crds() {
 }
 
 create_cloudflare_token_secret() {
-  if [[ -n "${CLOUDFLARE_API_TOKEN_FILE}" ]]; then
-    echo ">>> Creating Cloudflare API token secret: ${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}/${CLOUDFLARE_API_TOKEN_SECRET_NAME}"
-    if [[ ! -f "${CLOUDFLARE_API_TOKEN_FILE}" ]]; then
-      echo "ERROR: Cloudflare token file not found: ${CLOUDFLARE_API_TOKEN_FILE}" >&2
-      exit 1
-    fi
-    kubectl create namespace "${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-    CF_TOKEN="$(tr -d '\n' < "${CLOUDFLARE_API_TOKEN_FILE}")"
-    if [[ -z "${CF_TOKEN}" ]]; then
-      echo "ERROR: Cloudflare token file is empty: ${CLOUDFLARE_API_TOKEN_FILE}" >&2
-      exit 1
-    fi
-    kubectl -n "${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}" create secret generic "${CLOUDFLARE_API_TOKEN_SECRET_NAME}" \
+  if [[ -z "${CLOUDFLARE_API_TOKEN_FILE}" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "${CLOUDFLARE_API_TOKEN_FILE}" ]]; then
+    echo "ERROR: Cloudflare token file not found: ${CLOUDFLARE_API_TOKEN_FILE}" >&2
+    exit 1
+  fi
+
+  CF_TOKEN="$(tr -d '\n' < "${CLOUDFLARE_API_TOKEN_FILE}")"
+  if [[ -z "${CF_TOKEN}" ]]; then
+    echo "ERROR: Cloudflare token file is empty: ${CLOUDFLARE_API_TOKEN_FILE}" >&2
+    exit 1
+  fi
+
+  # Primary namespace (existing behavior)
+  echo ">>> Creating Cloudflare API token secret: ${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}/${CLOUDFLARE_API_TOKEN_SECRET_NAME}"
+  kubectl create namespace "${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}" create secret generic "${CLOUDFLARE_API_TOKEN_SECRET_NAME}" \
+    --from-literal=api-token="${CF_TOKEN}" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+  # Duplicate namespace (new)
+  if [[ -n "${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE}" && "${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE}" != "${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE}" ]]; then
+    echo ">>> Duplicating Cloudflare API token secret to: ${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE}/${CLOUDFLARE_API_TOKEN_SECRET_NAME}"
+    kubectl create namespace "${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    kubectl -n "${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE}" create secret generic "${CLOUDFLARE_API_TOKEN_SECRET_NAME}" \
       --from-literal=api-token="${CF_TOKEN}" \
       --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   fi
@@ -116,6 +130,7 @@ REPO_SSH_SECRET_NAME="${REPO_SSH_SECRET_NAME:-repo-git-ssh}"
 CLOUDFLARE_API_TOKEN_FILE="${CLOUDFLARE_API_TOKEN_FILE:-}"
 CLOUDFLARE_API_TOKEN_SECRET_NAME="${CLOUDFLARE_API_TOKEN_SECRET_NAME:-cloudflare-api-token}"
 CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE="${CLOUDFLARE_API_TOKEN_SECRET_NAMESPACE:-cert-manager}"
+CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE="${CLOUDFLARE_API_TOKEN_DUPLICATE_NAMESPACE:-external-dns-public}"
 
 # Where the GitOps root app lives
 ROOT_APP_PATH="${ROOT_APP_PATH:-gitops/clusters/${ENV}/root-app.yaml}"

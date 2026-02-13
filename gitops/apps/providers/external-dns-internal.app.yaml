@@ -1,22 +1,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: gitops-root
+  name: external-dns-internal
   namespace: argocd
 spec:
   project: default
   source:
-    repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra.git
-    targetRevision: v0.4
-    path: gitops/appsets
-    directory:
-      recurse: true
+    repoURL: ${GIT_REPO_URL}
+    targetRevision: ${REPO_REF}
+    path: gitops/manifests/external-dns/internal
   destination:
     server: https://kubernetes.default.svc
-    namespace: argocd
+    namespace: external-dns-internal
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+

@@ -1,168 +1,213 @@
-# Architecture Overview
+# Black Circuit Kubernetes Architecture
 
-This document describes the architectural model of the Black Circuit GitOps bootstrap platform (v0.3).
+## v0.4.0
 
-The guiding principle is deterministic infrastructure: the cluster must be rebuildable from scratch with minimal manual intervention and no hidden state.
+------------------------------------------------------------------------
 
----
+## 1. Overview
 
-## 1. Control Plane Model
+This document describes the reference Kubernetes architecture used for
+Black Circuit platform deployments.
 
-The system is built around an **Argo CD app-of-apps pattern**.
+Version 0.4.0 introduces a fully automated dual-provider DNS control
+plane, TSIG-authenticated RFC2136 updates for internal DNS,
+Cloudflare-managed public DNS with tunnel-based publishing, and
+ApplicationSet-driven provider deployment.
 
-Bootstrap installs Argo CD and seeds a root application. From that point onward, Argo CD owns reconciliation of the platform.
+The system is designed around:
 
-### Responsibility Boundary
+-   Deterministic bootstrap
+-   GitOps reconciliation (Argo CD)
+-   Strict authority boundaries
+-   Operational clarity
+-   Explicit ownership of infrastructure state
 
-Bootstrap owns:
+------------------------------------------------------------------------
 
-- Installing Argo CD (via Helm)
-- Installing prerequisite CRDs/controllers (e.g., MetalLB controller)
-- Creating non-GitOps secrets (repo SSH key, optional DNS token)
-- Applying the root app-of-apps
+## 2. Core Control Plane Model
 
-GitOps owns:
+Argo CD is the reconciliation engine for all in-cluster workloads.
 
-- All platform components (cert-manager, ingress, MetalLB pools, etc.)
-- All application workloads
-- Ongoing configuration drift correction
+### Deployment Model
 
-Bootstrap should be idempotent and safe to re-run.
+-   Root application: `gitops-root`
+-   Providers deployed via ApplicationSet
+-   Branch-aware targetRevision control
+-   No manual per-application Git reference changes
 
----
+This ensures reproducible cluster rebuilds and controlled environment
+promotion.
 
-## 2. Networking Model
+------------------------------------------------------------------------
 
-### MetalLB
+## 3. DNS Control Plane
 
-MetalLB is installed during bootstrap (controller + CRDs only).
+v0.4 introduces a strict separation between internal and public DNS
+authority.
 
-Address pools are GitOps-managed via:
+Two independent external-dns instances manage records declaratively.
 
-    gitops/manifests/metallb-pools/
+------------------------------------------------------------------------
 
-Two pools are defined:
+### 3.1 Internal DNS
 
-- public
-- private
+Zone:
 
-These map directly to ingress controllers.
+    int.blackcircuit.ca
 
----
+Authority:
 
-### Ingress Controllers
+-   Authoritative server: BIND9
+-   Port: 5335
+-   Dynamic updates via RFC2136
+-   TSIG authentication (hmac-sha256)
 
-Two independent ingress-nginx controllers exist:
+Managed by:
 
-| Controller      | Namespace               | IngressClass   | Purpose                |
-|----------------|------------------------|----------------|------------------------|
-| nginx-public   | ingress-nginx          | nginx-public   | Public-facing ingress  |
-| nginx-private  | ingress-nginx-private  | nginx-private  | Internal-only ingress  |
+-   Deployment: `external-dns-internal`
+-   Policy: `sync`
+-   Registry: `txt`
+-   Owner ID: `internal-1`
+-   IngressClass: `nginx-private`
 
-Each controller uses a distinct:
+Traffic flow:
 
-- --controller-class
-- --ingress-class
-- MetalLB IP pool
+Client → Pi-hole (53) → BIND authoritative (5335)
 
-This separation prevents class collisions and cross-wiring.
+Operational notes:
 
----
+-   BIND journal files must be writable
 
-## 3. Certificate Strategy
+-   Firewall must allow cluster IPv4 and IPv6 to port 5335
 
-The platform distinguishes between internal and public domains.
+-   Negative caching behavior must be understood when troubleshooting
 
-### Internal Domain
+-   Authoritative queries can be tested directly:
 
-    *.int.blackcircuit.ca
+    dig @pi.int.blackcircuit.ca -p 5335 host.int.blackcircuit.ca
 
-This zone is internal-only and not publicly delegated.
+Internal DNS does not depend on public infrastructure.
 
-Public ACME (e.g., Let’s Encrypt) cannot validate it.
+------------------------------------------------------------------------
 
-Therefore internal ingress uses:
+### 3.2 Public DNS
+
+Zone:
+
+    blackcircuit.ca
+
+Authority:
+
+-   Cloudflare
+
+Managed by:
+
+-   Deployment: `external-dns-public`
+-   Policy: `sync`
+-   Registry: `txt`
+-   Owner ID: `public-1`
+-   IngressClass: `nginx-public`
+-   Annotation-gated publishing
+
+Publishing model:
+
+Public records require explicit opt-in via ingress annotation:
+
+    external-dns.alpha.kubernetes.io/target=<tunnel-host>
+
+Example:
+
+    2ce35617-07ec-48c7-a184-0c45e645417a.cfargotunnel.com
+
+This ensures:
+
+-   No accidental publication of private IPs
+-   CNAME publishing to Cloudflare Tunnel
+-   Deterministic ownership
+-   No implicit A-record creation from private load balancer IPs
+
+Traffic flow:
+
+Client → Cloudflare Edge → Tunnel → nginx-public
+
+Public and internal DNS systems are intentionally isolated.
+
+------------------------------------------------------------------------
+
+## 4. Certificate Strategy
+
+Internal ingress uses:
 
     ClusterIssuer/int-ca
 
-This issuer is backed by an internally generated root CA:
+This issuer is backed by an internal CA generated during bootstrap.
 
-- self-signed bootstrap issuer
-- root CA stored in cert-manager namespace
-- long-lived root certificate
-- short-lived leaf certificates
+Characteristics:
 
-Clients must trust the internal root CA manually.
+-   Long-lived root
+-   Stored in cert-manager namespace
+-   Used exclusively for internal domains
 
----
+Planned evolution:
 
-### Public Domains (Optional)
+-   Replace internal CA with step-ca in a future release
 
-If public DNS is delegated (e.g., via Cloudflare), the platform may use:
+------------------------------------------------------------------------
 
-    ClusterIssuer/letsencrypt-*-dns01
+## 5. Secret Lifecycle
 
-DNS01 validation requires:
+Secrets are environment inputs and not Git-managed.
 
-- Publicly resolvable domain
-- Cloudflare API token secret
-- Proper zone delegation
+### RFC2136 TSIG Secret
 
-Public and internal certificate flows are intentionally separate.
+-   Namespace: `external-dns-internal`
+-   Generated during bootstrap
+-   Required for dynamic zone updates
 
----
+### Cloudflare API Token
 
-## 4. Secret Lifecycle
+-   Created in `cert-manager`
+-   Duplicated into `external-dns-public`
+-   Used exclusively for Cloudflare provider access
 
-Certain secrets are intentionally not GitOps-managed.
+------------------------------------------------------------------------
 
-### Repo Access
+## 6. Authority Boundaries
 
-- Secret: argocd/repo-git-ssh
-- Created during bootstrap if SSH key provided
-- Required for private repository access
+The system enforces the following constraints:
 
-### DNS Token (Public Only)
+-   Internal zones never depend on public DNS
+-   Public ingress must not use `.int.blackcircuit.ca`
+-   Public publishing requires explicit annotation
+-   DNS automation operates in `sync` mode with TXT ownership isolation
 
-- Secret: cert-manager/cloudflare-api-token
-- Created during bootstrap if DNS01 is enabled
+This prevents cross-boundary mutation and accidental data exposure.
 
-Secrets are considered environment inputs, not declarative configuration.
+------------------------------------------------------------------------
 
----
+## 7. Future Evolution
 
-## 5. Determinism & Rebuild Guarantees
+Planned enhancements:
 
-A valid platform state satisfies:
+-   step-ca integration
+-   Admission policies for ingress and DNS boundary enforcement
+-   Secret encryption via SOPS
+-   Cloudflare Tunnel lifecycle automation
+-   Policy enforcement for hostname boundaries
 
-- Bootstrap completes without manual patching
-- Argo CD applications converge to Healthy/Synced
-- Internal ingress serves TLS via internal CA
-- Public ingress (if configured) obtains ACME certificates
-- Teardown fully removes state and allows clean re-bootstrap
+------------------------------------------------------------------------
 
-Finalizers and CRD ordering are explicitly handled during teardown.
+## 8. Version Summary (v0.4.0)
 
----
+This release introduces:
 
-## 6. Future Evolution
+-   Dual-provider DNS automation
+-   RFC2136 dynamic internal DNS with TSIG
+-   Cloudflare public DNS with annotation-gated publishing
+-   ApplicationSet-driven provider deployment
+-   Full create/update/delete lifecycle via sync policy
+-   Deterministic bootstrap improvements
 
-Planned improvements include:
+------------------------------------------------------------------------
 
-- Replacing internal self-signed CA with step-ca
-- Optional external-dns integration
-- Formalized secret management (e.g., SOPS)
-
-These changes should preserve the existing bootstrap contract.
-
----
-
-## 7. Architectural Principles
-
-- Prefer explicitness over magic
-- Separate bootstrap concerns from reconciliation concerns
-- Avoid hidden controller coupling
-- Ensure internal domains do not depend on public infrastructure
-- Minimize mutable state outside Git
-
-This platform favors clarity and reproducibility over flexibility.
+End of document.
