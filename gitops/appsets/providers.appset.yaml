@@ -35,7 +35,7 @@ spec:
 
           - name: cert-manager-issuers
             namespace: cert-manager
-            path: gitops/apps/foundation/cert-manager-issuers
+            path: gitops/manifests/cert-manager/issuers
 
           - name: apps-ingress
             namespace: argocd
