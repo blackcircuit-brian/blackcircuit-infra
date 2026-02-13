@@ -26,7 +26,6 @@ spec:
 
           - name: cert-manager
             namespace: cert-manager
-            repoURL: oci://quay.io/jetstack/charts
             chart: cert-manager
             targetRevision: v1.19.3
             helmParameters:
@@ -47,7 +46,6 @@ spec:
       project: default
       source:
         {{- if .chart }}
-        repoURL: "{{.repoURL}}"
         chart: "{{.chart}}"
         targetRevision: "{{.targetRevision}}"
         helm:
