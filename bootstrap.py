@@ -91,6 +91,27 @@ def generate_known_hosts(repo_root: Path, host: str = "github.com") -> Path:
     return out_path
 
 
+def _kubectl(ctx: Context, *args: str, check: bool = True, capture: bool = False, text: bool = True, input_str: str | None = None):
+    cmd = ["kubectl"]
+    kube_ctx = getattr(ctx.args, "kube_context", None)
+    if kube_ctx:
+        cmd += ["--context", kube_ctx]
+    cmd += list(args)
+    return subprocess.run(
+        cmd,
+        check=check,
+        capture_output=capture,
+        text=text,
+        input=input_str,
+    )
+
+def _helm(ctx: Context, *args: str, check: bool = True, capture: bool = False, text: bool = True):
+    cmd = ["helm"]
+    kube_ctx = getattr(ctx.args, "kube_context", None)
+    if kube_ctx:
+        cmd += ["--kube-context", kube_ctx]
+    cmd += list(args)
+    return subprocess.run(cmd, check=check, capture_output=capture, text=text)
 def _prompt(text: str, default: Optional[str] = None) -> str:
     suffix = f" [{default}]" if default is not None and default != "" else ""
     while True:
@@ -868,40 +889,85 @@ class ValidationModule(BootstrapModule):
             sys.exit(1)
 
 
+
 class MetalLBModule(BootstrapModule):
     def add_args(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--with-metallb", action="store_true", help="Run MetalLB install as a pre-step")
-        parser.add_argument("--metallb-script", help="Path to MetalLB installer script")
-        parser.add_argument("--metallb-version", help="Optional MetalLB chart/version")
+        parser.add_argument("--with-metallb", action="store_true", help="Install MetalLB (CRDs + controller) via Helm")
+        parser.add_argument("--metallb-namespace", default=None, help="MetalLB namespace (default: metallb-system)")
+        parser.add_argument("--metallb-release", default=None, help="Helm release name (default: metallb)")
+        parser.add_argument("--metallb-chart-version", default=None, help="Pinned MetalLB chart version (default: 0.14.5)")
+        # Optional: keep chart repo override hooks if you ever need them
+        parser.add_argument("--metallb-chart-repo", default=None, help="Helm repo URL (default: https://metallb.github.io/metallb)")
+        parser.add_argument("--metallb-chart", default=None, help="Chart ref (default: metallb/metallb)")
 
     def run(self, ctx: Context) -> None:
-        if ctx.args.with_metallb:
-            ctx.set_env("METALLB_ENABLED", "true")
-            if ctx.args.metallb_version:
-                ctx.set_env("METALLB_CHART_VERSION", ctx.args.metallb_version)
+        if not ctx.args.with_metallb:
+            return
 
+        # Defaults aligned with bootstrap/metallb/metallb.sh
+        ns = (ctx.args.metallb_namespace or ctx.get_existing("METALLB_NAMESPACE", "metallb-system")).strip() or "metallb-system"
+        release = (ctx.args.metallb_release or ctx.get_existing("METALLB_RELEASE", "metallb")).strip() or "metallb"
+        repo = (ctx.args.metallb_chart_repo or ctx.get_existing("METALLB_CHART_REPO", "https://metallb.github.io/metallb")).strip()
+        chart = (ctx.args.metallb_chart or ctx.get_existing("METALLB_CHART", "metallb/metallb")).strip() or "metallb/metallb"
+        version = (ctx.args.metallb_chart_version or ctx.get_existing("METALLB_CHART_VERSION", "0.14.5")).strip() or "0.14.5"
 
-def run_metallb_installer(ctx: Context) -> None:
-    if not ctx.args.with_metallb:
-        return
-    
-    default_mb = ctx.repo_root / "bootstrap" / "metallb" / "metallb.sh"
-    mb_script = Path(ctx.args.metallb_script) if ctx.args.metallb_script else default_mb
-    mb_script = (ctx.repo_root / mb_script).resolve() if not mb_script.is_absolute() else mb_script
-    
-    if not mb_script.exists():
-        raise RuntimeError(f"MetalLB script not found at: {mb_script}")
+        # Persist for repeatability
+        ctx.set_env("METALLB_ENABLED", "true")
+        ctx.set_env("METALLB_NAMESPACE", ns)
+        ctx.set_env("METALLB_RELEASE", release)
+        ctx.set_env("METALLB_CHART_REPO", repo)
+        ctx.set_env("METALLB_CHART", chart)
+        ctx.set_env("METALLB_CHART_VERSION", version)
 
-    env = dict(os.environ)
-    if ctx.args.kube_context:
-        env["KUBE_CONTEXT"] = ctx.args.kube_context
-    if ctx.args.metallb_version:
-        env["METALLB_CHART_VERSION"] = ctx.args.metallb_version
+        print(">>> Verifying cluster access (MetalLB)")
+        _kubectl(ctx, "cluster-info", capture=True)
 
-    cmd = ["bash", str(mb_script)]
-    print(f"Running MetalLB bootstrap: {' '.join(shlex.quote(c) for c in cmd)}\n")
-    subprocess.run(cmd, cwd=str(ctx.repo_root), env=env, check=True)
+        print(f">>> Ensuring namespace: {ns}")
+        _ensure_namespace(ns, kube_context=getattr(ctx.args, "kube_context", None))
 
+        print(">>> Ensuring Helm repo: metallb")
+        # Avoid failing if already added
+        try:
+            _helm(ctx, "repo", "add", "metallb", repo, capture=True)
+        except subprocess.CalledProcessError:
+            pass
+        _helm(ctx, "repo", "update", capture=True)
+
+        print(f">>> Installing/upgrading MetalLB ({chart} @ {version})")
+        _helm(
+            ctx,
+            "upgrade", "--install", release, chart,
+            "--namespace", ns,
+            "--version", version,
+            "--force-conflicts",
+            "--wait",
+            "--timeout", "5m0s",
+        )
+
+        print(">>> Waiting for MetalLB controller rollout")
+        _kubectl(ctx, "-n", ns, "rollout", "status", "deployment/metallb-controller", "--timeout=5m", capture=True)
+
+        print(">>> Waiting for MetalLB CRDs to be Established (if present)")
+        crds = [
+            "ipaddresspools.metallb.io",
+            "bgppeers.metallb.io",
+            "bgpadvertisements.metallb.io",
+            "l2advertisements.metallb.io",
+            "communities.metallb.io",
+            "bfdprofiles.metallb.io",
+        ]
+        for crd in crds:
+            # mirror shell behavior: only wait if CRD exists
+            exists = subprocess.run(
+                ["kubectl"] + (["--context", ctx.args.kube_context] if ctx.args.kube_context else []) + ["get", "crd", crd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode == 0
+            if exists:
+                _kubectl(ctx, "wait", "--for=condition=Established", f"crd/{crd}", "--timeout=2m", capture=True)
+
+        print(f"✅ MetalLB installed: release={release} namespace={ns} version={version}")
+        print("Next: manage IPAddressPool/L2Advertisement via GitOps-root.")
 
 # ---- Main --------------------------------------------------------------------
 
