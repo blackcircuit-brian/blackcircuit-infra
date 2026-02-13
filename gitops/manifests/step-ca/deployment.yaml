@@ -42,6 +42,10 @@ spec:
                 exit 0
               fi
 
+              mkdir -p /home/step/secrets
+              cp /home/step/k8s-secrets/password /home/step/secrets/password
+              cp /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
+              chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
               echo "Initializing step-ca config..."
               step ca init \
                 --name "Black Circuit Internal CA" \
@@ -57,7 +61,7 @@ spec:
             - name: data
               mountPath: /home/step
             - name: secrets
-              mountPath: /home/step/secrets
+              mountPath: /home/step/k8s-secrets
               readOnly: true
 
       containers:
@@ -71,21 +75,24 @@ spec:
           args:
             - |
               set -euo pipefail
+              mkdir -p /home/step/secrets
+              cp /home/step/k8s-secrets/password /home/step/secrets/password
+              chmod 600 /home/step/secrets/password
               exec step-ca /home/step/config/ca.json --password-file /home/step/secrets/password
-          readinessProbe:
-            tcpSocket:
-              port: 8443
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          livenessProbe:
-            tcpSocket:
-              port: 8443
-            initialDelaySeconds: 15
-            periodSeconds: 10
-          volumeMounts:
-            - name: data
-              mountPath: /home/step
-            - name: secrets
-              mountPath: /home/step/secrets
-              readOnly: true
+                    readinessProbe:
+                      tcpSocket:
+                        port: 8443
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+                    livenessProbe:
+                      tcpSocket:
+                        port: 8443
+                      initialDelaySeconds: 15
+                      periodSeconds: 10
+                    volumeMounts:
+                      - name: data
+                        mountPath: /home/step
+                      - name: secrets
+                        mountPath: /home/step/secrets
+                        readOnly: true
 
