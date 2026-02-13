@@ -94,6 +94,6 @@ spec:
                       - name: data
                         mountPath: /home/step
                       - name: secrets
-                        mountPath: /home/step/secrets
+                        mountPath: /home/step/k8s-secrets
                         readOnly: true
 
