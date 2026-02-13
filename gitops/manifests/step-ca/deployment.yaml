@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: step-ca
+  labels:
+    app.kubernetes.io/name: step-ca
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: step-ca
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: step-ca
+    spec:
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: step-ca-data
+        - name: secrets
+          secret:
+            # Create this secret out-of-band (not in Git):
+            # kubectl -n step-ca create secret generic step-ca-secrets \
+            #   --from-literal=password='...' \
+            #   --from-literal=provisioner_password='...'
+            secretName: step-ca-secrets
+
+      initContainers:
+        - name: init-step-ca
+          # Pin a version once selected (recommended).
+          image: smallstep/step-ca:0.24.4
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              if [ -f /home/step/config/ca.json ]; then
+                echo "step-ca already initialized."
+                exit 0
+              fi
+
+              echo "Initializing step-ca..."
+              step-ca init \
+                --name "Black Circuit Internal CA" \
+                --dns "step-ca.step-ca.svc.cluster.local" \
+                --address ":8443" \
+                --provisioner "k8s-int" \
+                --password-file /home/step/secrets/password \
+                --provisioner-password-file /home/step/secrets/provisioner_password \
+                --acme
+
+              echo "Done."
+          volumeMounts:
+            - name: data
+              mountPath: /home/step
+            - name: secrets
+              mountPath: /home/step/secrets
+              readOnly: true
+
+      containers:
+        - name: step-ca
+          image: smallstep/step-ca:0.24.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: https
+              containerPort: 8443
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              exec step-ca /home/step/config/ca.json --password-file /home/step/secrets/password
+          readinessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8443
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /home/step
+            - name: secrets
+              mountPath: /home/step/secrets
+              readOnly: true
+

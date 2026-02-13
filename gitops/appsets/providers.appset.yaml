@@ -18,6 +18,10 @@ spec:
           - name: metallb-pools
             namespace: metallb-system
             path: gitops/manifests/metallb-pools
+
+          - name: step-ca
+            namespace: step-ca
+            path: gitops/manifests/step-ca
   template:
     metadata:
       name: "{{name}}"
