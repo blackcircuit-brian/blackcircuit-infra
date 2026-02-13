@@ -4,31 +4,37 @@ metadata:
   name: providers
   namespace: argocd
 spec:
-  generators:
-    - list:
-        elements:
-          - name: external-dns-internal
-            namespace: external-dns-internal
-            path: gitops/manifests/external-dns/internal
-          - name: external-dns-public
-            namespace: external-dns-public
-            path: gitops/manifests/external-dns/public
-  template:
-    metadata:
-      name: "{{name}}"
-    spec:
-      project: default
-      source:
-        repoURL: ssh://git@github.com/blackcircuit-brian/blackcircuit-infra.git
-        targetRevision: v0.4
-        path: "{{path}}"
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: "{{namespace}}"
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=true
+
+generators:
+  - list:
+      elements:
+        - name: external-dns-internal
+          namespace: external-dns-internal
+          path: gitops/manifests/external-dns/internal
+
+        - name: external-dns-public
+          namespace: external-dns-public
+          path: gitops/manifests/external-dns/public
+
+        - name: metallb-pools
+          namespace: metallb-system
+          path: gitops/manifests/metallb-pools
+    template:
+      metadata:
+        name: "{{name}}"
+      spec:
+        project: default
+        source:
+          repoURL: ssh://git@github.com/blackcircuit-brian/blackcircuit-infra.git
+          targetRevision: v0.4
+          path: "{{path}}"
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: "{{namespace}}"
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - CreateNamespace=true
 
