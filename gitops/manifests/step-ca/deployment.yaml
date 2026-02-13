@@ -43,12 +43,12 @@ spec:
               fi
 
               mkdir -p /home/step/secrets /home/step/config /home/step/db
-              chown -R 1000:1000 /home/step
+              chown 1000:1000 /home/step/secrets /home/step/config /home/step/db
+              chmod u+rwX /home/step/secrets /home/step/config /home/step/db
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               cp -f /home/step/k8s-secrets/provisioner_password /home/step/secrets/provisioner_password
               chmod 600 /home/step/secrets/password /home/step/secrets/provisioner_password              
-              chown -R 1000:1000 /home/step
-              chmod -R u+rwX /home/step
+              chmod 1000:1000 /home/step/secrets/password /home/step/secrets/provisioner_password
               echo "Initializing step-ca config..."
               step ca init \
                 --name "Black Circuit Internal CA" \
@@ -80,8 +80,8 @@ spec:
             - |
               set -euo pipefail
               mkdir -p /home/step/secrets
-              chown -R 1000:1000 /home/step/secrets
-              chmod -R u+rwX /home/step
+              chown 1000:1000 /home/step/secrets
+              chmod u+rwX /home/step/secrets
               cp -f /home/step/k8s-secrets/password /home/step/secrets/password
               chmod 600 /home/step/secrets/password
               chown 1000:1000 /home/step/secrets/password
