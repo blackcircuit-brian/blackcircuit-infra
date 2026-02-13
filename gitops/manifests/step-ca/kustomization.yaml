@@ -5,6 +5,7 @@ namespace: step-ca
 
 resources:
   - namespace.yaml
+  - pv.yaml
   - pvc.yaml
   - deployment.yaml
   - service.yaml

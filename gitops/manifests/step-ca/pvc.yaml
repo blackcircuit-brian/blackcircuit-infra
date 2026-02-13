@@ -3,6 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: step-ca-data
 spec:
+  volumeName: step-ca-data-pv
   accessModes:
     - ReadWriteOnce
   resources:
