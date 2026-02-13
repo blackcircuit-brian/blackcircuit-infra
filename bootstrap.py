@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import os
 import re
 import secrets
@@ -370,6 +371,12 @@ class Context:
 
     def set_env(self, key: str, value: str) -> None:
         self.env_values[key] = value
+
+    def kubectl(self, *args: str, **kwargs: Any) -> subprocess.CompletedProcess:
+        return _kubectl(self, *args, **kwargs)
+
+    def helm(self, *args: str, **kwargs: Any) -> subprocess.CompletedProcess:
+        return _helm(self, *args, **kwargs)
 
 
 class BootstrapModule(ABC):
@@ -955,10 +962,117 @@ class MetalLBModule(BootstrapModule):
         print(f"✅ MetalLB installed: release={release} namespace={ns} version={version}")
         print("Next: manage IPAddressPool/L2Advertisement via GitOps-root.")
 
+
+class TeardownModule(BootstrapModule):
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--argo-namespace", help="Argo CD namespace (default: from env or argocd)")
+        parser.add_argument("--root-app-name", help="Root application name (default: root)")
+        parser.add_argument("--remove-cert-manager-crds", action="store_true", help="Remove cert-manager CRDs")
+
+    def run(self, ctx: Context) -> None:
+        if not ctx.args.yes:
+            print("ERROR: teardown requires --yes to confirm destructive operation.", file=sys.stderr)
+            sys.exit(1)
+
+        argo_ns = (ctx.args.argo_namespace or ctx.get_existing("ARGO_NAMESPACE", "argocd")).strip()
+        root_app_name = (ctx.args.root_app_name or "root").strip()
+
+        print(">>> Context")
+        ctx.kubectl("config", "current-context")
+        try:
+            ctx.kubectl("cluster-info", capture=True)
+        except subprocess.CalledProcessError:
+            pass
+
+        print(f">>> Delete root app ({root_app_name}) if present")
+        ctx.kubectl("-n", argo_ns, "delete", "application", root_app_name, "--ignore-not-found=true", check=False)
+
+        print(">>> Delete remaining Argo Applications and AppProjects (best-effort)")
+        ctx.kubectl("-n", argo_ns, "delete", "applications.argoproj.io", "--all", "--ignore-not-found=true", check=False)
+        ctx.kubectl("-n", argo_ns, "delete", "appprojects.argoproj.io", "--all", "--ignore-not-found=true", check=False)
+
+        print(">>> Clear finalizers on Applications")
+        # Namespaced
+        apps_proc = ctx.kubectl("-n", argo_ns, "get", "applications.argoproj.io", "-o", "name", capture=True, check=False)
+        for app in apps_proc.stdout.splitlines():
+            if app.strip():
+                ctx.kubectl("-n", argo_ns, "patch", app.strip(), "--type=merge", "-p", '{"metadata":{"finalizers":null}}', capture=True, check=False)
+
+        # Cluster-wide
+        apps_jsonpath = '{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\\n"}{end}'
+        all_apps_proc = ctx.kubectl("get", "applications.argoproj.io", "-A", "-o", f"jsonpath={apps_jsonpath}", capture=True, check=False)
+        for line in all_apps_proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                ns, name = parts
+                ctx.kubectl("-n", ns, "patch", f"application/{name}", "--type=merge", "-p", '{"metadata":{"finalizers":null}}', capture=True, check=False)
+
+        print(">>> Clear finalizers on AppProjects")
+        projs_proc = ctx.kubectl("-n", argo_ns, "get", "appprojects.argoproj.io", "-o", "name", capture=True, check=False)
+        for proj in projs_proc.stdout.splitlines():
+            if proj.strip():
+                ctx.kubectl("-n", argo_ns, "patch", proj.strip(), "--type=merge", "-p", '{"metadata":{"finalizers":null}}', capture=True, check=False)
+
+        print(f">>> Delete ArgoCD namespace: {argo_ns}")
+        ctx.kubectl("delete", "ns", argo_ns, "--ignore-not-found=true", check=False)
+
+        print(">>> Delete cert-manager namespace")
+        ctx.kubectl("delete", "ns", "cert-manager", "--ignore-not-found=true", check=False)
+
+        if ctx.args.remove_cert_manager_crds:
+            print(">>> Removing cert-manager CRDs (destructive)")
+            crds_proc = ctx.kubectl("get", "crd", "-o", "name", capture=True, check=False)
+            cm_crds = [c for c in crds_proc.stdout.splitlines() if c.endswith(".cert-manager.io")]
+            if cm_crds:
+                ctx.kubectl("delete", *cm_crds, check=False)
+
+        print(">>> Force-finalize stuck namespaces (if any)")
+        self._force_finalize_namespace(ctx, argo_ns)
+        self._force_finalize_namespace(ctx, "cert-manager")
+
+        print("✅ Teardown complete.")
+
+    def _force_finalize_namespace(self, ctx: Context, ns: str) -> None:
+        try:
+            get_proc = ctx.kubectl("get", "ns", ns, "-o", "json", capture=True)
+            ns_obj = json.loads(get_proc.stdout)
+            
+            phase = ns_obj.get("status", {}).get("phase")
+            if phase != "Terminating":
+                return
+
+            print(f">>> Namespace {ns} is Terminating: removing namespace finalizers via /finalize")
+            if "spec" in ns_obj and "finalizers" in ns_obj["spec"]:
+                ns_obj["spec"]["finalizers"] = []
+            
+            ctx.kubectl("replace", "--raw", f"/api/v1/namespaces/{ns}/finalize", "-f", "-", input_str=json.dumps(ns_obj), check=False)
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            pass
+
 # ---- Main --------------------------------------------------------------------
 
 def main() -> int:
-    modules: List[BootstrapModule] = [
+    p = argparse.ArgumentParser(
+        prog="bootstrap.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Bootstrap or teardown Argo CD and core components.",
+    )
+    p.add_argument("--env-file", help="Path to write/read env file")
+    p.add_argument("--env-name", help="Name of environment (resolves to bootstrap/env/<name>.env)")
+    p.add_argument("--non-interactive", action="store_true", help="Do not prompt")
+    p.add_argument("--yes", action="store_true", help="Accept defaults without prompting")
+    p.add_argument("--kube-context", help="Optional kubectl context")
+
+    subparsers = p.add_subparsers(dest="command", help="Command to run")
+
+    # Bootstrap subcommand
+    bootstrap_p = subparsers.add_parser("bootstrap", help="Run bootstrap (default)")
+    
+    # Teardown subcommand
+    teardown_p = subparsers.add_parser("teardown", help="Run teardown")
+
+    # Common logic for modules
+    bootstrap_modules: List[BootstrapModule] = [
         ValidationModule(),
         CoreModule(),
         SSHModule(),
@@ -968,22 +1082,51 @@ def main() -> int:
         ArgoCDModule(),
         MetalLBModule(),
     ]
-
-    p = argparse.ArgumentParser(
-        prog="bootstrap.py",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Generate an env file and run bootstrap/argocd/bootstrap.sh.",
-    )
-    p.add_argument("--env-file", help="Path to write/read env file")
-    p.add_argument("--env-name", help="Name of environment (resolves to bootstrap/env/<name>.env)")
-    p.add_argument("--non-interactive", action="store_true", help="Do not prompt")
-    p.add_argument("--yes", action="store_true", help="Accept defaults without prompting")
-    p.add_argument("--kube-context", help="Optional kubectl context")
-
-    for m in modules:
-        m.add_args(p)
     
-    args = p.parse_args()
+    teardown_modules: List[BootstrapModule] = [
+        TeardownModule(),
+    ]
+
+    for m in bootstrap_modules:
+        m.add_args(bootstrap_p)
+    for m in teardown_modules:
+        m.add_args(teardown_p)
+    
+    # Hack to support default 'bootstrap' if no subcommand given
+    argv = sys.argv[1:]
+    
+    # We want to allow:
+    # ./bootstrap.py --env-name foo teardown
+    # ./bootstrap.py teardown
+    # ./bootstrap.py --env-name foo
+    # ./bootstrap.py
+    
+    # If "bootstrap" or "teardown" is already in argv, we don't need to do anything.
+    if not any(arg in ("bootstrap", "teardown") for arg in argv):
+        # We need to find where to insert "bootstrap".
+        # It should be after the global options.
+        # Global options are: --env-file, --env-name, --non-interactive, --yes, --kube-context
+        # and their values.
+        
+        insert_idx = 0
+        i = 0
+        while i < len(argv):
+            if argv[i] in ("--env-file", "--env-name", "--kube-context"):
+                i += 2
+                insert_idx = i
+            elif argv[i] in ("--non-interactive", "--yes"):
+                i += 1
+                insert_idx = i
+            elif argv[i] in ("-h", "--help"):
+                # If they asked for help on global options, let it be.
+                break
+            else:
+                # First unknown arg, insert here.
+                insert_idx = i
+                break
+        argv.insert(insert_idx, "bootstrap")
+
+    args = p.parse_args(argv)
 
     here = Path(__file__).resolve()
     repo_root = _find_repo_root(here.parent)
@@ -1001,27 +1144,30 @@ def main() -> int:
 
     ctx = Context(repo_root=repo_root, args=args, existing_env=_parse_env_file(env_path))
 
-    for m in modules:
-        m.run(ctx)
-
-    _write_env_file(env_path, ctx.env_values)
-
-    print("\n=== Summary ===")
-    print(f"Env file:        {env_path}")
-    for k in ["ORG_SLUG", "ENV", "ARGO_NAMESPACE", "ROOT_APP_PATH"]:
-        print(f"{k:<16} {ctx.env_values.get(k)}")
-    if ctx.env_values.get("GITHUB_REPO"):
-        print(f"REPO_VISIBILITY: {ctx.env_values.get('REPO_VISIBILITY')}")
-        print(f"GITHUB_REPO:     {ctx.env_values.get('GITHUB_REPO')}")
-        print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
-        print(f"GIT_REPO_URL:    {ctx.env_values.get('GIT_REPO_URL')}")
+    if args.command == "teardown":
+        for m in teardown_modules:
+            m.run(ctx)
     else:
-        print(f"GITHUB_REPO:     (not set)")
-        print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
-    if ctx.env_values.get("SSH_KNOWN_HOSTS_FILE"):
-        print(f"KNOWN_HOSTS:     {ctx.env_values.get('SSH_KNOWN_HOSTS_FILE')}")
-    print("")
-    print(">>> Bootstrap complete (Argo CD and core components handled by Python).")
+        for m in bootstrap_modules:
+            m.run(ctx)
+        _write_env_file(env_path, ctx.env_values)
+
+        print("\n=== Summary ===")
+        print(f"Env file:        {env_path}")
+        for k in ["ORG_SLUG", "ENV", "ARGO_NAMESPACE", "ROOT_APP_PATH"]:
+            print(f"{k:<16} {ctx.env_values.get(k)}")
+        if ctx.env_values.get("GITHUB_REPO"):
+            print(f"REPO_VISIBILITY: {ctx.env_values.get('REPO_VISIBILITY')}")
+            print(f"GITHUB_REPO:     {ctx.env_values.get('GITHUB_REPO')}")
+            print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
+            print(f"GIT_REPO_URL:    {ctx.env_values.get('GIT_REPO_URL')}")
+        else:
+            print(f"GITHUB_REPO:     (not set)")
+            print(f"REPO_REF:        {ctx.env_values.get('REPO_REF')}")
+        if ctx.env_values.get("SSH_KNOWN_HOSTS_FILE"):
+            print(f"KNOWN_HOSTS:     {ctx.env_values.get('SSH_KNOWN_HOSTS_FILE')}")
+        print("")
+        print(">>> Bootstrap complete (Argo CD and core components handled by Python).")
 
     return 0
 
