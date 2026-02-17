@@ -28,7 +28,7 @@ spec:
 
           - name: cert-manager
             namespace: cert-manager
-            path: gitops/manifests/cert-manager/kustomization.yaml
+            path: gitops/manifests/cert-manager
 
           - name: apps-ingress
             namespace: argocd
