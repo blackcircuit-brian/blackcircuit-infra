@@ -26,9 +26,9 @@ spec:
             namespace: step-ca
             path: gitops/manifests/step-ca
 
-          - name: cert-manager
+          - name: apps-cert-manager
             namespace: cert-manager
-            path: gitops/manifests/cert-manager
+            path: gitops/apps/foundation/cert-manager
 
           - name: apps-ingress
             namespace: argocd

@@ -1,22 +1,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: ingress-nginx-public
+  name: cert-manager-issuers
   namespace: argocd
 spec:
   project: default
+  source:
+    repoURL: ${GIT_REPO_URL}
+    targetRevision: ${REPO_REF}
+    path: gitops/manifests/cert-manager-issuers
   destination:
     server: https://kubernetes.default.svc
-    namespace: ingress-nginx
-  source:
-    repoURL: oci://quay.io/jetstack/charts/cert-manager
-    chart: cert-manager
-    targetRevision: v1.19.3
-    helm:
-      releaseName: cert-manager
+    #namespace: cert-manager
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+
