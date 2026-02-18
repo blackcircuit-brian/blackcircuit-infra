@@ -6,8 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ${GIT_REPO_URL}
-    targetRevision: ${REPO_REF}
+    repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra    
+    targetRevision: v0.4
     path: gitops/manifests/external-dns/public
   destination:
     server: https://kubernetes.default.svc
