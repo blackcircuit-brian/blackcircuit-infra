@@ -14,8 +14,9 @@ spec:
     targetRevision: v1.19.3
     helm:
       releaseName: cert-manager
-      values: |
-        crds.enabled: false
+      parameters:
+        - name: crds.enabled
+          value: "false"
   syncPolicy:
     automated:
       prune: true
