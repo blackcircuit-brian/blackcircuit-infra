@@ -6,6 +6,8 @@ metadata:
 spec:
   project: default
   source:
+    targetRevision: v0.4
+    repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra    
     path: gitops/manifests/cert-manager-issuers
   destination:
     server: https://kubernetes.default.svc
