@@ -14,9 +14,12 @@ spec:
     targetRevision: v1.19.3
     helm:
       releaseName: cert-manager
+      values: |
+        crds.enabled: false
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+

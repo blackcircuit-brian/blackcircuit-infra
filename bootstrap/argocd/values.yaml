@@ -36,7 +36,7 @@ tolerations:
 configs:
   # Useful when you later render Helm via Kustomize in apps
   cm:
-    kustomize.buildOptions: "--enable-helm"
+    kustomize.buildOptions: "--enable-helm --load-restrictor LoadRestrictionsNone"
     url: https://argocd.int.blackcircuit.ca
   params:
     server.insecure: true

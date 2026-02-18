@@ -8,7 +8,7 @@ configMapGenerator:
   - name: platform-config
     namespace: cert-manager
     envs:
-      - ../../../../../../bootstrap/env/kubeadm.env
+      - ../../../../env/kubeadm/platform.env
 
 generatorOptions:
   disableNameSuffixHash: true
