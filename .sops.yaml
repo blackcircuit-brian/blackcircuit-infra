@@ -1,0 +1,6 @@
+creation_rules:
+  - path_regex: .*secrets\.enc\.yaml$
+    encrypted_regex: "^(data|stringData)$"
+    # Choose ONE key scheme:
+    # age: ["age1...publickey..."]
+    # or pgp: ["<fingerprint>"]
