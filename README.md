@@ -19,6 +19,7 @@ Issuer migration to ACME will follow in a subsequent point release.
   `docs/kubernetes-kubeadm-bootstrap.md`
 - Architecture: `docs/architecture.md`
 - Operations: `docs/operations.md`
+- GitHub + Argo CD bootstrap setup: `docs/github-argocd-bootstrap.md`
 - GitOps structure: `gitops/README.md`
 
 ------------------------------------------------------------------------
@@ -231,4 +232,3 @@ A clean rebuild must succeed without manual intervention.
 Current release:
 
     0.4.2
-
