@@ -63,3 +63,9 @@ inputs/
 
 __pycache__/
 .idea/
+
+# SOPS
+.sops.yaml
+
+# Helm charts
+charts/
