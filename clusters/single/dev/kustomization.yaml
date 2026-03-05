@@ -6,4 +6,5 @@ resources:
 
   # Bootstrap platform (iteration 1)
   - ../../../platform/metallb/overlays/dev
+  - ../../../platform/ingress-nginx/overlays/dev
   - ../../../platform/argocd/overlays/dev

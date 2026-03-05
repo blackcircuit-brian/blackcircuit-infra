@@ -31,3 +31,6 @@ helmCharts:
       server:
         ingress:
           enabled: false
+      configs:
+        cm:
+          kustomizeBuildOptions: "--enable-helm"
