@@ -4,12 +4,13 @@ metadata:
   name: argocd-server
   namespace: argocd-dev
   annotations:
+    argocd.argoproj.io/sync-wave: "20"
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
     nginx.ingress.kubernetes.io/ssl-passthrough: "true"
 spec:
   ingressClassName: nginx-private
   rules:
-    - host: argocd.int.blackcircuit.ca
+    - host: argocd-dev.int.blackcircuit.ca
       http:
         paths:
           - path: /
