@@ -26,6 +26,8 @@ helmCharts:
       controller:
         admissionWebhooks:
           enabled: false
+          patch:
+            enabled: false
         ingressClass: nginx-private
         ingressClassResource:
           enabled: true
