@@ -24,6 +24,8 @@ helmCharts:
     namespace: ingress-nginx-dev
     valuesInline:
       controller:
+        admissionWebhooks:
+          enabled: false
         ingressClass: nginx-private
         ingressClassResource:
           enabled: true
