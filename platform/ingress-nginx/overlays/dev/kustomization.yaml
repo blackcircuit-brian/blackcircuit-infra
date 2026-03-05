@@ -20,14 +20,15 @@ helmCharts:
   - name: ingress-nginx
     repo: https://kubernetes.github.io/ingress-nginx
     version: 4.13.3
-    releaseName: ingress-nginx-dev
+    releaseName: ingress-nginx-dev-private
     namespace: ingress-nginx-dev
     valuesInline:
       controller:
         admissionWebhooks:
-          enabled: false
+          enabled: true
           patch:
-            enabled: false
+            enabled: true
+        electionID: ingress-nginx-dev-private-leader
         ingressClass: nginx-private
         ingressClassResource:
           enabled: true
@@ -36,4 +37,31 @@ helmCharts:
           default: false
         watchIngressWithoutClass: false
         service:
-          type: LoadBalancer
+          type: NodePort
+          nodePorts:
+            http: 30080
+            https: 30443
+  - name: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.13.3
+    releaseName: ingress-nginx-dev-public
+    namespace: ingress-nginx-dev
+    valuesInline:
+      controller:
+        admissionWebhooks:
+          enabled: true
+          patch:
+            enabled: true
+        electionID: ingress-nginx-dev-public-leader
+        ingressClass: nginx-public
+        ingressClassResource:
+          enabled: true
+          name: nginx-public
+          controllerValue: k8s.io/nginx-public-ingress-nginx
+          default: false
+        watchIngressWithoutClass: false
+        service:
+          type: NodePort
+          nodePorts:
+            http: 31080
+            https: 31443

@@ -5,6 +5,7 @@ resources:
   - namespaces.yaml
 
   # Bootstrap platform (iteration 1)
-  - ../../../platform/metallb/overlays/dev
   - ../../../platform/ingress-nginx/overlays/dev
+  - ../../../platform/cert-manager/base
+  - ../../../platform/step-ca/base
   - ../../../platform/argocd/overlays/dev
