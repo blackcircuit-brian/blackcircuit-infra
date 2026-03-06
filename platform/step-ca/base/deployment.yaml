@@ -5,6 +5,9 @@ metadata:
   namespace: step-ca
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: step-ca
