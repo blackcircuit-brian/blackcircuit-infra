@@ -85,7 +85,7 @@ ACME issuer migration to a subsequent release.
 
 ### Changed
 
--   kubeadm is now the reference cluster environment
+-   AWS EKS (Pulumi-provisioned) is now the reference cluster environment
 -   Internal domains no longer use public ACME validation
 -   Ingress is fully managed via GitOps (no standalone ingress YAML)
 -   Bootstrap explicitly separates prerequisite installation from GitOps

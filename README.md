@@ -15,8 +15,10 @@ Issuer migration to ACME will follow in a subsequent point release.
 
 ## Documentation
 
-- Kubernetes bootstrap with kubeadm:
-  `docs/kubernetes-kubeadm-bootstrap.md`
+- AWS EKS provisioning with Pulumi:
+  `scripts/pulumi/`
+- WireGuard private-access operations:
+  `docs/wireguard-ops.md`
 - Architecture: `docs/architecture.md`
 - Operations: `docs/operations.md`
 - GitHub + Argo CD bootstrap setup: `docs/github-argocd-bootstrap.md`
@@ -160,26 +162,18 @@ to a later point release.
 
 ## Prerequisites
 
-- Running Kubernetes cluster
-- `kubectl`
-- `helm`
-- Cluster-admin privileges
-
-Cluster provisioning is intentionally out of scope.
+- `pulumi` CLI
+- AWS credentials/profile configured for your target account
+- Python 3.11+ with `pip`
 
 ------------------------------------------------------------------------
 
 ## Quick Start
 
-    ./bootstrap.py --env-file bootstrap/env/kubeadm.env
-
-Optional flags:
-
-    --ssh-key-file ~/.ssh/id_ed25519
-    --cloudflare-token-file ~/.cloudflare-token
-    --rfc2136-tsig-keyname external-dns-int
-    --apply-rfc2136-tsig-secret
-    --non-interactive
+    cd scripts/pulumi
+    pip install -r requirements.txt
+    pulumi stack select dev
+    pulumi up
 
 ------------------------------------------------------------------------
 
@@ -192,7 +186,7 @@ These secrets are intentionally not GitOps-managed:
 - `external-dns-internal/rfc2136-tsig`
 - `step-ca/step-ca-secrets`
 
-Bootstrap inputs (`bootstrap/inputs/`) must be gitignored.
+Keep bootstrap inputs and cloud credentials out of Git.
 
 ------------------------------------------------------------------------
 
@@ -212,7 +206,8 @@ With internal ingress:
 
 Teardown:
 
-    bootstrap/argocd/teardown.sh
+    cd scripts/pulumi
+    pulumi destroy
 
 A clean rebuild must succeed without manual intervention.
 
@@ -220,7 +215,7 @@ A clean rebuild must succeed without manual intervention.
 
 ## Out of Scope
 
-- Cluster provisioning automation
+- WireGuard host configuration and credential lifecycle
 - Tunnel lifecycle automation
 - Secret encryption (SOPS)
 - cert-manager ACME cutover to step-ca (planned)

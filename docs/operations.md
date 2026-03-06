@@ -130,7 +130,9 @@ Bootstrap is used only for:
 
 Standard invocation:
 
-    ./bootstrap.py --env-file bootstrap/env/<env>.env
+    cd scripts/pulumi
+    pulumi stack select <env>
+    pulumi up
 
 Bootstrap inputs must not be committed to Git.
 

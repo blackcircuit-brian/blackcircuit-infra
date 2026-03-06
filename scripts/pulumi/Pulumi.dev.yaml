@@ -1,0 +1,38 @@
+config:
+  aws:profile: brian-blackcircuit-ca
+  aws:region: ca-west-1
+  bootstrap:orgName: blackcircuit
+  bootstrap:environment: dev
+  bootstrap:systemName: aws
+  bootstrap:vpcCidr: 10.42.0.0/16
+  bootstrap:availabilityZoneCount: "2"
+  bootstrap:publicSubnetCidrs:
+    - 10.42.0.0/18
+    - 10.42.64.0/18
+  bootstrap:privateSubnetCidrs:
+    - 10.42.128.0/18
+    - 10.42.192.0/18
+  bootstrap:kubernetesVersion: "1.33"
+  bootstrap:clusterEndpointPrivateAccess: "true"
+  bootstrap:clusterEndpointPublicAccess: "true"
+  bootstrap:nodeArch: arm64
+  bootstrap:armInstanceTypes:
+    - t4g.small
+  bootstrap:amdInstanceTypes:
+    - t3.small
+  bootstrap:nodeDesiredSize: "1"
+  bootstrap:nodeMinSize: "1"
+  bootstrap:nodeMaxSize: "2"
+  bootstrap:nodeDiskSize: "20"
+  bootstrap:natGatewayStrategy: single
+  bootstrap:enableWireGuard: "true"
+  bootstrap:wireGuardAllowedCidrs: [198.53.65.215/32]
+  bootstrap:wireGuardInstanceType: t4g.nano
+  bootstrap:wireGuardAmiArch: arm64
+  bootstrap:wireGuardAmiId: ""
+  bootstrap:wireGuardSshKeyName: ""
+  bootstrap:wireGuardTunnelCidr: 10.200.10.0/24
+  bootstrap:officeLanCidrs:
+    - 192.168.1.0/24
+  bootstrap:clusterPublicAccessCidrs:
+    - 198.53.65.215/32

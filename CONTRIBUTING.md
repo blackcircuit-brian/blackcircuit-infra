@@ -20,7 +20,7 @@ This repository represents the internal development foundation of the Black Circ
 
 1. Create a feature branch from the main branch.
 2. Implement changes using declarative manifests, charts, or documented configuration.
-3. Ensure changes deploy cleanly to the kubeadm reference environment and do not assume k3d-specific behavior.
+3. Ensure changes deploy cleanly to the AWS EKS reference environment provisioned by Pulumi.
 4. Submit a Pull Request with a clear description of:
 
    * Purpose of the change
@@ -84,4 +84,3 @@ Specifically:
 * Bootstrap-only secrets (e.g., repo SSH, DNS tokens) must not be committed to Git.
 
 Any change that affects bootstrap ordering, CRDs, or controller lifecycle must be tested against a clean cluster rebuild.
-
