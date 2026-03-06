@@ -74,8 +74,9 @@ helmCharts:
                   *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;;
                 esac
                 KSOPS_VERSION="v4.4.0"
+                KSOPS_VERSION_NO_V="${KSOPS_VERSION#v}"
                 SOPS_VERSION="v3.10.2"
-                curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${KSOPS_ARCH}.tar.gz" -o /tmp/ksops.tgz
+                curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION_NO_V}_Linux_${KSOPS_ARCH}.tar.gz" -o /tmp/ksops.tgz
                 tar -xzf /tmp/ksops.tgz -C /tmp
                 install -m 0755 /tmp/ksops /custom-tools/ksops
                 curl -fsSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${SOPS_ARCH}" -o /custom-tools/sops

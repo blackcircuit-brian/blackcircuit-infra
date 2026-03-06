@@ -33,7 +33,8 @@ sops --version
 
 # Install ksops binary (Linux)
 KSOPS_VERSION=v4.4.0
-curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_x86_64.tar.gz" -o /tmp/ksops.tgz
+KSOPS_VERSION_NO_V="${KSOPS_VERSION#v}"
+curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION_NO_V}_Linux_x86_64.tar.gz" -o /tmp/ksops.tgz
 tar -xzf /tmp/ksops.tgz -C /tmp
 sudo install -m 0755 /tmp/ksops /usr/local/bin/ksops
 ksops version
