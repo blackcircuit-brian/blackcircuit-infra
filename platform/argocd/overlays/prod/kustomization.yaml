@@ -6,6 +6,7 @@ namespace: argocd-prod
 resources:
   - ../../base
   - ingress.yaml
+  - secrets.enc.yaml
 
 patches:
   - target:

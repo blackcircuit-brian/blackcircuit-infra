@@ -6,6 +6,7 @@ namespace: argocd-test
 resources:
   - ../../base
   - ingress.yaml
+  - secrets.enc.yaml
 
 patches:
   - target:
