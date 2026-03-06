@@ -38,7 +38,8 @@ jobs:
           curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION_NO_V}_Linux_${KSOPS_ARCH}.tar.gz" -o /tmp/ksops.tgz
           tar -xzf /tmp/ksops.tgz -C /tmp
           sudo install -m 0755 /tmp/ksops /usr/local/bin/ksops
-          ksops version
+          command -v ksops
+          ls -l /usr/local/bin/ksops
 
       - name: Validate overlays
         run: ./scripts/validate-kustomize.sh
