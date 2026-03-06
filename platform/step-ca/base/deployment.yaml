@@ -13,15 +13,24 @@ spec:
       labels:
         app.kubernetes.io/name: step-ca
     spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       initContainers:
         - name: init-step-ca
           image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              mkdir -p /home/step/certs /home/step/config /home/step/db /home/step/secrets
               if [ ! -f /home/step/config/ca.json ]; then
                 step ca init \
                   --name "${STEP_CA_NAME}" \
@@ -33,7 +42,18 @@ spec:
                   --deployment-type standalone \
                   --acme
               fi
+              if [ ! -r /home/step/config/ca.json ]; then
+                echo "init-step-ca: /home/step/config/ca.json missing or unreadable"
+                ls -la /home/step || true
+                ls -la /home/step/config || true
+                exit 1
+              fi
+              chown -R 1000:1000 /home/step
+              chmod 0755 /home/step /home/step/config /home/step/certs /home/step/db /home/step/secrets
+              chmod 0644 /home/step/config/ca.json
           env:
+            - name: STEPPATH
+              value: /home/step
             - name: STEP_CA_NAME
               value: Black Circuit Internal PKI
             - name: STEP_CA_DNS
@@ -50,6 +70,12 @@ spec:
         - name: step-ca
           image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: STEPPATH
+              value: /home/step
           args:
             - /home/step/config/ca.json
             - --password-file
