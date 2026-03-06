@@ -24,5 +24,20 @@ jobs:
         with:
           version: v3.15.4
 
+      - name: Setup KSOPS
+        run: |
+          set -euo pipefail
+          KSOPS_VERSION=v4.4.0
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64) KSOPS_ARCH="x86_64" ;;
+            aarch64) KSOPS_ARCH="arm64" ;;
+            *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${KSOPS_ARCH}.tar.gz" -o /tmp/ksops.tgz
+          tar -xzf /tmp/ksops.tgz -C /tmp
+          sudo install -m 0755 /tmp/ksops /usr/local/bin/ksops
+          ksops version
+
       - name: Validate overlays
         run: ./scripts/validate-kustomize.sh
