@@ -136,6 +136,12 @@ sysctl --system
             "Name": f"{names.prefix}-wg",
             "role": "wireguard-gateway",
         },
+        opts=pulumi.ResourceOptions(
+            # Keep the gateway stable across runs even if the SSM "latest" AMI alias moves.
+            ignore_changes=["ami"],
+            # If a replacement is still required, avoid two concurrent gateways.
+            delete_before_replace=True,
+        ),
     )
 
     eip = aws.ec2.Eip(

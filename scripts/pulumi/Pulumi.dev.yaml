@@ -14,7 +14,7 @@ config:
     - 10.42.192.0/18
   bootstrap:kubernetesVersion: "1.33"
   bootstrap:clusterEndpointPrivateAccess: "true"
-  bootstrap:clusterEndpointPublicAccess: "false"
+  bootstrap:clusterEndpointPublicAccess: "true"
   bootstrap:nodeArch: arm64
   bootstrap:armInstanceTypes:
     - t4g.large
