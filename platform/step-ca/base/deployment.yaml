@@ -15,7 +15,7 @@ spec:
     spec:
       initContainers:
         - name: init-step-ca
-          image: smallstep/step-ca:0.28.7
+          image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -48,7 +48,7 @@ spec:
               readOnly: true
       containers:
         - name: step-ca
-          image: smallstep/step-ca:0.28.7
+          image: smallstep/step-ca:0.29.0
           imagePullPolicy: IfNotPresent
           args:
             - /home/step/config/ca.json
