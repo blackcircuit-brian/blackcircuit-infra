@@ -71,3 +71,24 @@ config:
     value: 10.200.10.0/24
   bootstrap:officeLanCidrs:
     value: []
+
+  bootstrap:argoRepoUrl:
+    value: git@github.com:blackcircuit-brian/blackcircuit-infra.git
+  bootstrap:argoRepoSshPrivateKey:
+    value: ""
+  bootstrap:argoRepoSshPrivateKeyFile:
+    value: ""
+  bootstrap:argoRepoKnownHosts:
+    value: ""
+  bootstrap:argoRepoKnownHostsFile:
+    value: ""
+  bootstrap:argoRepoKnownHostsAutoScan:
+    value: "true"
+  bootstrap:sopsAgeKey:
+    value: ""
+  bootstrap:sopsAgeKeyFile:
+    value: ""
+  bootstrap:stepCaPassword:
+    value: ""
+  bootstrap:stepCaProvisionerPassword:
+    value: ""

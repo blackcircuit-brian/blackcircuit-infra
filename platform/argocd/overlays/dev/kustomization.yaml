@@ -6,7 +6,6 @@ namespace: argocd-dev
 resources:
   - ../../base
   - ingress.yaml
-  - secrets.enc.yaml
 
 patches:
   - target:
@@ -32,6 +31,60 @@ helmCharts:
       server:
         ingress:
           enabled: false
+      repoServer:
+        env:
+          - name: XDG_CONFIG_HOME
+            value: /home/argocd/.config
+          - name: SOPS_AGE_KEY_FILE
+            value: /home/argocd/.config/sops/age/keys.txt
+        volumes:
+          - name: custom-tools
+            emptyDir: {}
+          - name: sops-age
+            secret:
+              secretName: sops-age
+              optional: true
+        volumeMounts:
+          - name: custom-tools
+            mountPath: /usr/local/bin/ksops
+            subPath: ksops
+          - name: custom-tools
+            mountPath: /usr/local/bin/sops
+            subPath: sops
+          - name: custom-tools
+            mountPath: /home/argocd/.config/kustomize/plugin
+            subPath: plugin
+          - name: sops-age
+            mountPath: /home/argocd/.config/sops/age
+            readOnly: true
+        initContainers:
+          - name: install-ksops
+            image: alpine:3.20
+            command:
+              - /bin/sh
+              - -c
+            args:
+              - |
+                set -euo pipefail
+                apk add --no-cache curl tar
+                ARCH="$(uname -m)"
+                case "${ARCH}" in
+                  x86_64) KSOPS_ARCH="x86_64"; SOPS_ARCH="amd64" ;;
+                  aarch64) KSOPS_ARCH="arm64"; SOPS_ARCH="arm64" ;;
+                  *) echo "unsupported arch: ${ARCH}" >&2; exit 1 ;;
+                esac
+                KSOPS_VERSION="v4.4.0"
+                SOPS_VERSION="v3.10.2"
+                curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_${KSOPS_ARCH}.tar.gz" -o /tmp/ksops.tgz
+                tar -xzf /tmp/ksops.tgz -C /tmp
+                install -m 0755 /tmp/ksops /custom-tools/ksops
+                curl -fsSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${SOPS_ARCH}" -o /custom-tools/sops
+                chmod 0755 /custom-tools/sops
+                mkdir -p /custom-tools/plugin/viaduct.ai/v1/ksops
+                cp /custom-tools/ksops /custom-tools/plugin/viaduct.ai/v1/ksops/ksops
+            volumeMounts:
+              - name: custom-tools
+                mountPath: /custom-tools
       configs:
         cm:
-          kustomize.buildOptions: "--enable-helm"
+          kustomize.buildOptions: "--enable-helm --enable-alpha-plugins --enable-exec"

@@ -58,6 +58,22 @@ In GitHub repo settings:
 
 ## 3) Create Argo CD repository secret in cluster
 
+Preferred (Pulumi bootstrap-managed, not GitOps-managed):
+
+1. Add bootstrap inputs:
+
+```bash
+cd scripts/pulumi
+pulumi stack select dev
+pulumi config set bootstrap:argoRepoSshPrivateKeyFile ~/.ssh/argocd-repo
+pulumi config set bootstrap:sopsAgeKeyFile ~/.config/sops/age/keys.txt
+pulumi up -y
+```
+
+`bootstrap:argoRepoKnownHostsAutoScan` defaults to `true`, so known hosts are discovered with `ssh-keyscan` from `bootstrap:argoRepoUrl` unless you set `bootstrap:argoRepoKnownHosts` or `bootstrap:argoRepoKnownHostsFile`.
+
+Fallback (imperative/manual bootstrap):
+
 Use the private key and GitHub host key to create the secret in each Argo CD namespace you deploy:
 
 ```bash
@@ -72,6 +88,14 @@ kubectl -n argocd-dev create secret generic repo-git-ssh \
 ```
 
 Repeat for `argocd-test` / `argocd-prod` if those controllers are active.
+
+Create `sops-age` as well:
+
+```bash
+kubectl -n argocd-dev create secret generic sops-age \
+  --from-file=keys.txt="$HOME/.config/sops/age/keys.txt" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
 ## 4) Verify Argo CD can connect
 

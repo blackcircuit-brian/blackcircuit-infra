@@ -3,7 +3,9 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - secrets.enc.yaml
   - pvc.yaml
   - service.yaml
   - deployment.yaml
+
+generators:
+  - ksops-secrets.yaml

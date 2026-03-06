@@ -170,27 +170,48 @@ to a later point release.
 - `pulumi` CLI
 - AWS credentials/profile configured for your target account
 - Python 3.11+ with `pip`
+- `sops` + `ksops` for encrypted secret rendering in Kustomize
 
 ------------------------------------------------------------------------
 
 ## Quick Start
 
-Initial bootstrap (avoid private-endpoint chicken-and-egg):
+Bootstrap procedure (explicit two-phase endpoint flow):
 
     cd scripts/pulumi
     pip install -r requirements.txt
     pulumi stack select dev
+Phase 1 (bring-up with temporary public API access):
+
     pulumi config set bootstrap:clusterEndpointPublicAccess true
     pulumi config set --path 'bootstrap:clusterPublicAccessCidrs[0]' '<your-public-ip>/32'
+    # Keep private endpoint as desired for your environment.
+    pulumi config set bootstrap:clusterEndpointPrivateAccess <true|false>
     pulumi config set bootstrap:enableWireGuard true
     pulumi config set --path 'bootstrap:wireGuardAllowedCidrs[0]' '<your-public-ip>/32'
-    pulumi up
+    # Bootstrap secrets created by Pulumi from local files (recommended)
+    pulumi config set bootstrap:argoRepoSshPrivateKeyFile ~/.ssh/argocd-repo
+    pulumi config set bootstrap:sopsAgeKeyFile ~/.config/sops/age/keys.txt
+    pulumi config set --secret bootstrap:stepCaPassword '<strong-random-password>'
+    pulumi config set --secret bootstrap:stepCaProvisionerPassword '<strong-random-password>'
+    pulumi up -y
 
-After WireGuard tunnel is established and `kubectl` works through it:
+After WireGuard tunnel is established and `kubectl` works through it, lock API to private-only:
 
     pulumi config set bootstrap:clusterEndpointPublicAccess false
     pulumi config rm bootstrap:clusterPublicAccessCidrs
-    pulumi up
+    pulumi up -y
+
+Notes:
+
+- Public API CIDRs use `bootstrap:clusterPublicAccessCidrs`.
+- This stack does not define `bootstrap:clusterEndpointPrivateCidrs`; private endpoint reachability is controlled by VPC routing, security groups, and WireGuard.
+- Inline secret config values are still supported (`bootstrap:argoRepoSshPrivateKey`, `bootstrap:argoRepoKnownHosts`, `bootstrap:sopsAgeKey`).
+- `bootstrap:argoRepoKnownHostsAutoScan` defaults to `true` and will run `ssh-keyscan` from `bootstrap:argoRepoUrl` when known-hosts input is not provided.
+- When the secret config values above are set, `pulumi up` creates:
+  - `argocd-<env>/repo-git-ssh`
+  - `argocd-<env>/sops-age`
+  - `step-ca/step-ca-secrets`
 
 Fresh-cluster cert-manager CRD bootstrap (avoid first-run CRD race):
 
@@ -199,7 +220,7 @@ Fresh-cluster cert-manager CRD bootstrap (avoid first-run CRD race):
 
 Then apply full environment bootstrap:
 
-    kustomize build --enable-helm clusters/single/dev | kubectl apply -f -
+    kustomize build --enable-helm --enable-alpha-plugins --enable-exec clusters/single/dev | kubectl apply -f -
 
 ------------------------------------------------------------------------
 
@@ -207,7 +228,8 @@ Then apply full environment bootstrap:
 
 These secrets are intentionally not GitOps-managed:
 
-- `argocd/repo-git-ssh`
+- `argocd-<env>/repo-git-ssh`
+- `argocd-<env>/sops-age`
 - `cert-manager/cloudflare-api-token`
 - `external-dns-internal/rfc2136-tsig`
 - `step-ca/step-ca-secrets`
@@ -233,7 +255,11 @@ With internal ingress:
 Teardown:
 
     cd scripts/pulumi
-    pulumi destroy
+    pulumi destroy -y
+
+Optional single-line rebuild:
+
+    pulumi destroy -y && pulumi up -y
 
 A clean rebuild must succeed without manual intervention.
 

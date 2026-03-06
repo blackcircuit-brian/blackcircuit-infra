@@ -8,6 +8,7 @@ Install:
 
 - `sops`: https://github.com/getsops/sops/releases
 - `age` (recommended): https://github.com/FiloSottile/age
+- `ksops`: https://github.com/viaduct-ai/kustomize-sops
 
 Common options:
 
@@ -29,6 +30,13 @@ curl -fsSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/so
 chmod +x /tmp/sops
 sudo install -m 0755 /tmp/sops /usr/local/bin/sops
 sops --version
+
+# Install ksops binary (Linux)
+KSOPS_VERSION=v4.4.0
+curl -fsSL "https://github.com/viaduct-ai/kustomize-sops/releases/download/${KSOPS_VERSION}/ksops_${KSOPS_VERSION}_Linux_x86_64.tar.gz" -o /tmp/ksops.tgz
+tar -xzf /tmp/ksops.tgz -C /tmp
+sudo install -m 0755 /tmp/ksops /usr/local/bin/ksops
+ksops version
 ```
 
 If you prefer package managers (`brew`, `choco`, `winget`, etc.), use those instead.
@@ -118,3 +126,17 @@ sops platform/cloudflare-ddns/base/secrets.enc.yaml
 - Ensure files remain encrypted before commit (contain a `sops:` block).
 - Commit `*.enc.yaml` files to Git.
 - Do not commit unencrypted secret files.
+
+## 6. Render encrypted secrets with Kustomize
+
+When overlays include KSOPS generators, build with plugin flags:
+
+```bash
+kustomize build --enable-helm --enable-alpha-plugins --enable-exec clusters/single/dev
+```
+
+If plugin discovery fails, set:
+
+```bash
+export KUSTOMIZE_PLUGIN_HOME="${HOME}/.config/kustomize/plugin"
+```

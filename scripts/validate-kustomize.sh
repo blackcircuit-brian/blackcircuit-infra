@@ -27,6 +27,11 @@ if [[ "${KUSTOMIZE_BIN}" == /snap/bin/* ]] || [[ "${HELM_BIN}" == /snap/bin/* ]]
   echo "warning: prefer non-snap binaries (for example in ~/.local/bin)" >&2
 fi
 
+if ! command -v ksops >/dev/null 2>&1; then
+  echo "ksops is required on PATH for SOPS-encrypted secrets" >&2
+  exit 1
+fi
+
 overlays=(
   "clusters/single/dev"
   "clusters/single/test"
@@ -35,7 +40,13 @@ overlays=(
 
 for overlay in "${overlays[@]}"; do
   echo "==> validating ${overlay}"
-  "${KUSTOMIZE_BIN}" build --enable-helm --helm-command "${HELM_BIN}" "${overlay}" >/dev/null
+  KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME:-${HOME}/.config/kustomize/plugin}" \
+  "${KUSTOMIZE_BIN}" build \
+    --enable-helm \
+    --enable-alpha-plugins \
+    --enable-exec \
+    --helm-command "${HELM_BIN}" \
+    "${overlay}" >/dev/null
   echo "ok: ${overlay}"
 done
 
