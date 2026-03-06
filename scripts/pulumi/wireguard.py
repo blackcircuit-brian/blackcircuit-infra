@@ -33,6 +33,7 @@ def create_wireguard_gateway(
     config: BootstrapConfig,
     names: ResourceNames,
     network: NetworkOutputs,
+    cluster_security_group_id: pulumi.Input[str],
 ) -> WireGuardOutputs:
     ami_id = _resolve_ami(config)
     user_data = """#!/bin/bash
@@ -106,6 +107,17 @@ sysctl --system
             **config.tags,
             "Name": f"{names.prefix}-wg-sg",
         },
+    )
+
+    aws.ec2.SecurityGroupRule(
+        f"{names.prefix}-wg-to-eks-api-443",
+        type="ingress",
+        security_group_id=cluster_security_group_id,
+        protocol="tcp",
+        from_port=443,
+        to_port=443,
+        source_security_group_id=security_group.id,
+        description="Allow EKS API access from WireGuard gateway",
     )
 
     instance = aws.ec2.Instance(

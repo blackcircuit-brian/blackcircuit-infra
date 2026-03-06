@@ -26,7 +26,7 @@ WG_INSTALL_PACKAGES="${WG_INSTALL_PACKAGES:-true}"
 usage() {
   cat <<'EOF'
 Usage:
-  sudo WG_CLIENT_ADDRESS="10.200.10.2/32" \
+  sudo WG_CLIENT_ADDRESS="10.200.10.2/24" \
        WG_SERVER_PUBLIC_KEY="<server-public-key>" \
        WG_SERVER_ENDPOINT="<eip-or-dns>:51820" \
        WG_ALLOWED_IPS="10.42.0.0/16,10.200.10.0/24" \

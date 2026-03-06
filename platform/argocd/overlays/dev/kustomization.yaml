@@ -33,4 +33,4 @@ helmCharts:
           enabled: false
       configs:
         cm:
-          kustomizeBuildOptions: "--enable-helm"
+          kustomize.buildOptions: "--enable-helm"

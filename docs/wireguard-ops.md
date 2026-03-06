@@ -136,10 +136,12 @@ Intermittent behavior:
 
 This is the simplest end-to-end flow to establish a tunnel from a Raspberry Pi.
 
-1. Deploy or update the stack with WireGuard gateway enabled.
+1. Deploy or update the stack with temporary public API access and WireGuard enabled.
 
    Example stack config:
 
+   - `bootstrap:clusterEndpointPublicAccess=true`
+   - `bootstrap:clusterPublicAccessCidrs=["<your-public-ip>/32"]`
    - `bootstrap:enableWireGuard=true`
    - `bootstrap:wireGuardAllowedCidrs=["<your-public-ip>/32"]`
 
@@ -161,7 +163,7 @@ This is the simplest end-to-end flow to establish a tunnel from a Raspberry Pi.
 4. On the Pi, generate keys and write client config.
 
    ```bash
-   sudo WG_CLIENT_ADDRESS="10.200.10.2/32" \
+   sudo WG_CLIENT_ADDRESS="10.200.10.2/24" \
         WG_SERVER_PUBLIC_KEY="<server-public-key>" \
         WG_SERVER_ENDPOINT="<wireGuardPublicIp>:51820" \
         WG_ALLOWED_IPS="<vpc-cidr>,10.200.10.0/24" \
@@ -197,6 +199,14 @@ This is the simplest end-to-end flow to establish a tunnel from a Raspberry Pi.
    ```
 
    Replace `10.200.10.2` with your Pi WireGuard IP for the environment.
+
+8. Lock EKS API back to private-only once tunnel access is confirmed.
+
+   ```bash
+   pulumi config set bootstrap:clusterEndpointPublicAccess false
+   pulumi config rm bootstrap:clusterPublicAccessCidrs
+   pulumi up
+   ```
 
 Scripts referenced above:
 

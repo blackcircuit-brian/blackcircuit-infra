@@ -6,7 +6,9 @@ resources:
 
   # Bootstrap platform (iteration 1)
   - ../../../platform/ingress-nginx/overlays/prod
-  - ../../../platform/cert-manager/base
+  - ../../../platform/cert-manager/core
+  - ../../../platform/cert-manager/issuers
+  - ../../../platform/storage/base
   - ../../../platform/step-ca/base
   - ../../../platform/cloudflare-ddns/base
   - ../../../platform/argocd/overlays/prod

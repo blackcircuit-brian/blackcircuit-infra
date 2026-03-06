@@ -14,15 +14,15 @@ config:
     - 10.42.192.0/18
   bootstrap:kubernetesVersion: "1.33"
   bootstrap:clusterEndpointPrivateAccess: "true"
-  bootstrap:clusterEndpointPublicAccess: "true"
+  bootstrap:clusterEndpointPublicAccess: "false"
   bootstrap:nodeArch: arm64
   bootstrap:armInstanceTypes:
-    - t4g.small
+    - t4g.large
   bootstrap:amdInstanceTypes:
     - t3.small
-  bootstrap:nodeDesiredSize: "1"
+  bootstrap:nodeDesiredSize: "2"
   bootstrap:nodeMinSize: "1"
-  bootstrap:nodeMaxSize: "2"
+  bootstrap:nodeMaxSize: "3"
   bootstrap:nodeDiskSize: "20"
   bootstrap:natGatewayStrategy: single
   bootstrap:enableWireGuard: "true"

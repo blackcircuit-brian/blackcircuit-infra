@@ -131,7 +131,7 @@ Characteristics:
 
 - Deployed via provider ApplicationSet under `gitops/manifests/step-ca`
 - ClusterIP service (443 → 8443)
-- Static PV with `Retain` policy
+- Dynamic PVC via `StorageClass/gp3` (EBS CSI)
 - Secrets are not GitOps-managed
 
 Required Kubernetes secret (created manually or via automation):
@@ -143,9 +143,14 @@ Required keys:
 - password
 - provisioner_password
 
-Data path (default static PV):
+Data path in the container:
 
     /var/lib/step-ca
+
+Prerequisites for dynamic volume provisioning:
+
+- EKS add-on `aws-ebs-csi-driver` installed (Pulumi-managed)
+- `StorageClass/gp3` applied in cluster bootstrap manifests
 
 ### Current Certificate Model
 
@@ -170,10 +175,31 @@ to a later point release.
 
 ## Quick Start
 
+Initial bootstrap (avoid private-endpoint chicken-and-egg):
+
     cd scripts/pulumi
     pip install -r requirements.txt
     pulumi stack select dev
+    pulumi config set bootstrap:clusterEndpointPublicAccess true
+    pulumi config set --path 'bootstrap:clusterPublicAccessCidrs[0]' '<your-public-ip>/32'
+    pulumi config set bootstrap:enableWireGuard true
+    pulumi config set --path 'bootstrap:wireGuardAllowedCidrs[0]' '<your-public-ip>/32'
     pulumi up
+
+After WireGuard tunnel is established and `kubectl` works through it:
+
+    pulumi config set bootstrap:clusterEndpointPublicAccess false
+    pulumi config rm bootstrap:clusterPublicAccessCidrs
+    pulumi up
+
+Fresh-cluster cert-manager CRD bootstrap (avoid first-run CRD race):
+
+    kubectl apply -k platform/cert-manager/core
+    kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout=300s
+
+Then apply full environment bootstrap:
+
+    kustomize build --enable-helm clusters/single/dev | kubectl apply -f -
 
 ------------------------------------------------------------------------
 

@@ -170,7 +170,7 @@ Characteristics:
 -   Namespace: `step-ca`
 -   Deployment managed via ApplicationSet (providers)
 -   ClusterIP service (443 → 8443)
--   Static PersistentVolume (Retain policy)
+-   Dynamic PVC via `StorageClass/gp3` (EBS CSI)
 -   ACME endpoint enabled
 -   Secrets are not GitOps-managed
 
@@ -183,7 +183,7 @@ Required keys:
 -   password
 -   provisioner_password
 
-Data path (default static PV):
+Data path in the container:
 
     /var/lib/step-ca
 

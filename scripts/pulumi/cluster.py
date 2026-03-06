@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 
 import pulumi
 import pulumi_aws as aws
@@ -82,6 +83,49 @@ def create_cluster(
             profile_name=aws_profile
         ) if aws_profile else None,
         opts=pulumi.ResourceOptions(depends_on=attachments),
+    )
+
+    ebs_csi_role = aws.iam.Role(
+        f"{names.prefix}-ebs-csi-role",
+        assume_role_policy=pulumi.Output.all(
+            cluster.oidc_provider_arn,
+            cluster.oidc_provider_url,
+        ).apply(
+            lambda args: json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"Federated": args[0]},
+                        "Action": "sts:AssumeRoleWithWebIdentity",
+                        "Condition": {
+                            "StringEquals": {
+                                f"{args[1].replace('https://', '')}:aud": "sts.amazonaws.com",
+                                f"{args[1].replace('https://', '')}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa",
+                            }
+                        },
+                    }
+                ],
+            })
+        ),
+        tags=config.tags,
+    )
+
+    ebs_csi_policy_attachment = aws.iam.RolePolicyAttachment(
+        f"{names.prefix}-ebs-csi-policy",
+        role=ebs_csi_role.name,
+        policy_arn="arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy",
+    )
+
+    aws.eks.Addon(
+        f"{names.prefix}-ebs-csi-addon",
+        cluster_name=cluster.eks_cluster.name,
+        addon_name="aws-ebs-csi-driver",
+        service_account_role_arn=ebs_csi_role.arn,
+        resolve_conflicts_on_create="OVERWRITE",
+        resolve_conflicts_on_update="OVERWRITE",
+        tags=config.tags,
+        opts=pulumi.ResourceOptions(depends_on=[cluster, ebs_csi_policy_attachment]),
     )
 
     eks.ManagedNodeGroup(

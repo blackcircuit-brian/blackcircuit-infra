@@ -11,13 +11,19 @@ names = build_names(config)
 
 network = create_network(config, names)
 platform = create_cluster(config, names, network)
-wireguard = create_wireguard_gateway(config, names, network) if config.enable_wireguard else None
+wireguard = create_wireguard_gateway(
+    config,
+    names,
+    network,
+    platform.cluster.cluster_security_group_id,
+) if config.enable_wireguard else None
 
 pulumi.export("awsRegion", config.aws_region)
 pulumi.export("vpcId", network.vpc.id)
 pulumi.export("publicSubnetIds", network.public_subnet_ids)
 pulumi.export("privateSubnetIds", network.private_subnet_ids)
 pulumi.export("clusterName", platform.cluster.eks_cluster.name)
+pulumi.export("clusterSecurityGroupId", platform.cluster.cluster_security_group_id)
 pulumi.export("kubeconfig", pulumi.Output.secret(platform.kubeconfig))
 pulumi.export("wireGuardEnabled", config.enable_wireguard)
 pulumi.export("wireGuardInstanceId", wireguard.instance_id if wireguard else None)
