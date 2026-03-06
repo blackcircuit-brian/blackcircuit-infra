@@ -76,6 +76,8 @@ spec:
           env:
             - name: STEPPATH
               value: /home/step
+          command:
+            - step-ca
           args:
             - /home/step/config/ca.json
             - --password-file
