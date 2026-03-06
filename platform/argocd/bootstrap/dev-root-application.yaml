@@ -9,7 +9,7 @@ spec:
   project: default
   source:
     repoURL: git@github.com:blackcircuit-brian/blackcircuit-infra.git
-    targetRevision: v0.5
+    targetRevision: refs/heads/v0.5
     path: clusters/single/dev
   destination:
     server: https://kubernetes.default.svc
