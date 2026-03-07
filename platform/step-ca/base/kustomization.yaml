@@ -6,3 +6,6 @@ resources:
   - pvc.yaml
   - service.yaml
   - deployment.yaml
+
+generators:
+  - ksops-secrets.yaml

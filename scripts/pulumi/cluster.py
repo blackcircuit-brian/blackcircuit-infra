@@ -13,6 +13,7 @@ from network import NetworkOutputs
 @dataclass
 class ClusterOutputs:
     cluster: eks.Cluster
+    node_group: eks.ManagedNodeGroup
     kubeconfig: pulumi.Output[dict]
 
 
@@ -128,7 +129,7 @@ def create_cluster(
         opts=pulumi.ResourceOptions(depends_on=[cluster, ebs_csi_policy_attachment]),
     )
 
-    eks.ManagedNodeGroup(
+    node_group = eks.ManagedNodeGroup(
         names.node_group_name,
         cluster=cluster,
         node_role=node_role,
@@ -153,5 +154,6 @@ def create_cluster(
 
     return ClusterOutputs(
         cluster=cluster,
+        node_group=node_group,
         kubeconfig=cluster.kubeconfig,
     )

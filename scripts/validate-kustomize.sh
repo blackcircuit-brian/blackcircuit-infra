@@ -27,6 +27,19 @@ if [[ "${KUSTOMIZE_BIN}" == /snap/bin/* ]] || [[ "${HELM_BIN}" == /snap/bin/* ]]
   echo "warning: prefer non-snap binaries (for example in ~/.local/bin)" >&2
 fi
 
+if ! command -v ksops >/dev/null 2>&1; then
+  echo "ksops is required on PATH for SOPS-encrypted secrets" >&2
+  exit 1
+fi
+
+KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME:-${HOME}/.config/kustomize/plugin}"
+KSOPS_PLUGIN_BIN="${KUSTOMIZE_PLUGIN_HOME}/viaduct.ai/v1/ksops/ksops"
+if [[ ! -x "${KSOPS_PLUGIN_BIN}" ]]; then
+  mkdir -p "$(dirname "${KSOPS_PLUGIN_BIN}")"
+  cp "$(command -v ksops)" "${KSOPS_PLUGIN_BIN}"
+  chmod 0755 "${KSOPS_PLUGIN_BIN}"
+fi
+
 overlays=(
   "clusters/single/dev"
   "clusters/single/test"
@@ -35,6 +48,7 @@ overlays=(
 
 for overlay in "${overlays[@]}"; do
   echo "==> validating ${overlay}"
+  KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME}" \
   "${KUSTOMIZE_BIN}" build \
     --enable-helm \
     --enable-alpha-plugins \

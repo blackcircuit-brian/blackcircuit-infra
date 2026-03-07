@@ -192,8 +192,6 @@ Phase 1 (bring-up with temporary public API access):
     # Bootstrap secrets created by Pulumi from local files (recommended)
     pulumi config set bootstrap:argoRepoSshPrivateKeyFile ~/.ssh/argocd-repo
     pulumi config set bootstrap:sopsAgeKeyFile ~/.config/sops/age/keys.txt
-    pulumi config set --secret bootstrap:stepCaPassword '<strong-random-password>'
-    pulumi config set --secret bootstrap:stepCaProvisionerPassword '<strong-random-password>'
     pulumi up -y
 
 After WireGuard tunnel is established and `kubectl` works through it, lock API to private-only:
@@ -211,7 +209,6 @@ Notes:
 - When the secret config values above are set, `pulumi up` creates:
   - `argocd-<env>/repo-git-ssh`
   - `argocd-<env>/sops-age`
-  - `step-ca/step-ca-secrets`
 
 Fresh-cluster cert-manager CRD bootstrap (avoid first-run CRD race):
 
@@ -232,7 +229,6 @@ These secrets are intentionally not GitOps-managed:
 - `argocd-<env>/sops-age`
 - `cert-manager/cloudflare-api-token`
 - `external-dns-internal/rfc2136-tsig`
-- `step-ca/step-ca-secrets`
 
 Keep bootstrap inputs and cloud credentials out of Git.
 

@@ -77,15 +77,18 @@ def _resolve_secret(
     secret_key: str,
     file_key: str,
 ) -> pulumi.Output[str] | None:
-    secret_value = cfg.get_secret(secret_key)
+    inline_value = cfg.get(secret_key)
+    inline_value_is_set = inline_value is not None and inline_value.strip() != ""
+    secret_value = cfg.get_secret(secret_key) if inline_value_is_set else None
     file_value = cfg.get(file_key)
+    file_value_is_set = file_value is not None and file_value.strip() != ""
 
-    if secret_value is not None and file_value:
+    if secret_value is not None and file_value_is_set:
         pulumi.log.warn(f"Both bootstrap:{secret_key} and bootstrap:{file_key} are set; using bootstrap:{secret_key}.")
 
     if secret_value is not None:
         return secret_value
-    if not file_value:
+    if not file_value_is_set:
         return None
     return _secret_from_file(file_value, f"bootstrap:{file_key}")
 
@@ -109,25 +112,23 @@ def create_bootstrap_secrets(config, platform: ClusterOutputs) -> None:
         argo_repo_known_hosts_auto_scan = True
 
     sops_age_key = _resolve_secret(cfg, "sopsAgeKey", "sopsAgeKeyFile")
-    step_ca_password = cfg.get_secret("stepCaPassword")
-    step_ca_provisioner_password = cfg.get_secret("stepCaProvisionerPassword")
 
     provider = k8s.Provider(
         "bootstrap-k8s",
         kubeconfig=pulumi.Output.json_dumps(platform.kubeconfig),
+        opts=pulumi.ResourceOptions(
+            depends_on=[platform.cluster, platform.node_group],
+        ),
     )
 
     argocd_namespace_name = f"argocd-{config.environment}"
     argocd_namespace = k8s.core.v1.Namespace(
         f"{config.environment}-argocd-namespace",
         metadata={"name": argocd_namespace_name},
-        opts=pulumi.ResourceOptions(provider=provider),
-    )
-
-    step_ca_namespace = k8s.core.v1.Namespace(
-        f"{config.environment}-step-ca-namespace",
-        metadata={"name": "step-ca"},
-        opts=pulumi.ResourceOptions(provider=provider),
+        opts=pulumi.ResourceOptions(
+            provider=provider,
+            depends_on=[platform.cluster, platform.node_group],
+        ),
     )
 
     if (
@@ -174,25 +175,6 @@ def create_bootstrap_secrets(config, platform: ClusterOutputs) -> None:
                 "keys.txt": sops_age_key,
             },
             opts=pulumi.ResourceOptions(provider=provider, depends_on=[argocd_namespace]),
-        )
-
-    if step_ca_password is not None and step_ca_provisioner_password is not None:
-        k8s.core.v1.Secret(
-            f"{config.environment}-step-ca-secrets",
-            metadata={
-                "name": "step-ca-secrets",
-                "namespace": "step-ca",
-            },
-            type="Opaque",
-            string_data={
-                "password": step_ca_password,
-                "provisioner_password": step_ca_provisioner_password,
-            },
-            opts=pulumi.ResourceOptions(provider=provider, depends_on=[step_ca_namespace]),
-        )
-    elif step_ca_password is not None or step_ca_provisioner_password is not None:
-        pulumi.log.warn(
-            "Both bootstrap:stepCaPassword and bootstrap:stepCaProvisionerPassword are required to create step-ca-secrets."
         )
 
 config = get_bootstrap_config()
