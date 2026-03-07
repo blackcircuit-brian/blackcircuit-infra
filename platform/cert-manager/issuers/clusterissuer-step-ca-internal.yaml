@@ -8,6 +8,10 @@ spec:
   acme:
     email: pki@blackcircuit.ca
     server: https://step-ca.step-ca.svc.cluster.local/acme/k8s-int/directory
+    # Base64-encoded PEM root certificate for step-ca TLS trust.
+    # Populate from:
+    # kubectl -n step-ca exec deploy/step-ca -- cat /home/step/certs/root_ca.crt | base64 -w0
+    caBundle: REPLACE_WITH_BASE64_STEP_CA_ROOT_CERT
     privateKeySecretRef:
       name: step-ca-int-acme-account-key
     solvers:

@@ -219,6 +219,10 @@ Then apply full environment bootstrap:
 
     kustomize build --enable-helm --enable-alpha-plugins --enable-exec clusters/single/dev | kubectl apply -f -
 
+Single-command deployment (infra + manifests + step-ca ACME issuer reconcile):
+
+    ENVIRONMENT=dev PULUMI_STACK=dev ./scripts/deploy-all.sh
+
 ------------------------------------------------------------------------
 
 ## Secrets Managed by Bootstrap
