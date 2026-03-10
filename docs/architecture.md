@@ -1,6 +1,6 @@
 # Black Circuit Kubernetes Architecture
 
-## v0.4.0
+## v0.5
 
 ------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ promotion.
 
 ## 3. DNS Control Plane
 
-v0.4 introduces a strict separation between internal and public DNS
+v0.5 maintains a strict separation between internal and public DNS
 authority.
 
 Two independent external-dns instances manage records declaratively.
@@ -136,21 +136,38 @@ Public and internal DNS systems are intentionally isolated.
 
 ## 4. Certificate Strategy
 
+The platform uses step-ca as the active internal ACME issuer.
+
+### 4.1 Active Internal Issuer
+
 Internal ingress uses:
 
-    ClusterIssuer/int-ca
+    ClusterIssuer/step-ca-int-acme
 
-This issuer is backed by an internal CA generated during bootstrap.
+Issuer endpoint:
+
+    https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
 
 Characteristics:
 
--   Long-lived root
--   Stored in cert-manager namespace
--   Used exclusively for internal domains
+-   ACME account registration handled by cert-manager
+-   Internal trust anchored by the step-ca root/intermediate bundle
+-   HTTP-01 challenges solved via `nginx-private`
 
-Planned evolution:
+------------------------------------------------------------------------
 
--   Replace internal CA with step-ca in a future release
+### 4.2 Internal PKI Service (step-ca)
+
+step-ca is GitOps-managed and authoritative for internal certificate issuance.
+
+Characteristics:
+
+-   Deployed via ApplicationSet (providers)
+-   ACME-capable
+-   ClusterIP service (443 → 9000)
+-   Persistent data in `/home/step` on PVC-backed storage
+-   Secrets not managed in Git
+-   Fully reconciled by Argo CD
 
 ------------------------------------------------------------------------
 
@@ -189,7 +206,6 @@ This prevents cross-boundary mutation and accidental data exposure.
 
 Planned enhancements:
 
--   step-ca integration
 -   Admission policies for ingress and DNS boundary enforcement
 -   Secret encryption via SOPS
 -   Cloudflare Tunnel lifecycle automation
@@ -197,7 +213,8 @@ Planned enhancements:
 
 ------------------------------------------------------------------------
 
-## 8. Version Summary (v0.4.0)
+
+## 8. Version Summary (v0.5)
 
 This release introduces:
 
@@ -205,7 +222,8 @@ This release introduces:
 -   RFC2136 dynamic internal DNS with TSIG
 -   Cloudflare public DNS with annotation-gated publishing
 -   ApplicationSet-driven provider deployment
--   Full create/update/delete lifecycle via sync policy
+-   step-ca promoted to active ACME issuer for internal ingress
+-   Internal ingress-nginx moved to internal AWS NLB `LoadBalancer`
 -   Deterministic bootstrap improvements
 
 ------------------------------------------------------------------------

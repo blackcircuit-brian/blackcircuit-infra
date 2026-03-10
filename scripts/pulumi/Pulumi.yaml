@@ -1,0 +1,88 @@
+name: blackcircuit-aws-bootstrap
+runtime:
+  name: python
+description: Minimal AWS bootstrap for small-org EKS
+config:
+  aws:region:
+    value: ca-central-1
+
+  bootstrap:orgName:
+    value: blackcircuit
+  bootstrap:environment:
+    value: dev
+  bootstrap:systemName:
+    value: platform
+
+  bootstrap:vpcCidr:
+    value: 10.42.0.0/16
+  bootstrap:availabilityZoneCount:
+    value: 2
+  bootstrap:publicSubnetCidrs:
+    value:
+      - 10.42.0.0/18
+      - 10.42.64.0/18
+  bootstrap:privateSubnetCidrs:
+    value:
+      - 10.42.128.0/18
+      - 10.42.192.0/18
+
+  bootstrap:kubernetesVersion:
+    value: "1.33"
+  bootstrap:clusterEndpointPrivateAccess:
+    value: true
+  bootstrap:clusterEndpointPublicAccess:
+    value: false
+  bootstrap:clusterPublicAccessCidrs:
+    value: []
+
+  bootstrap:nodeArch:
+    value: arm64
+  bootstrap:armInstanceTypes:
+    value:
+      - t4g.small
+  bootstrap:amdInstanceTypes:
+    value:
+      - t3.small
+
+  bootstrap:nodeDesiredSize:
+    value: 1
+  bootstrap:nodeMinSize:
+    value: 1
+  bootstrap:nodeMaxSize:
+    value: 2
+  bootstrap:nodeDiskSize:
+    value: 20
+
+  bootstrap:natGatewayStrategy:
+    value: single
+  bootstrap:enableWireGuard:
+    value: false
+  bootstrap:wireGuardAllowedCidrs:
+    value: []
+  bootstrap:wireGuardInstanceType:
+    value: t4g.nano
+  bootstrap:wireGuardAmiArch:
+    value: arm64
+  bootstrap:wireGuardAmiId:
+    value: ""
+  bootstrap:wireGuardSshKeyName:
+    value: ""
+  bootstrap:wireGuardTunnelCidr:
+    value: 10.200.10.0/24
+  bootstrap:wireGuardAttachPrivateInterface:
+    value: true
+  bootstrap:wireGuardPrivateSubnetIndex:
+    value: 0
+  bootstrap:officeLanCidrs:
+    value: []
+
+  bootstrap:argoRepoUrl:
+    value: git@github.com:blackcircuit-brian/blackcircuit-infra.git
+  bootstrap:argoRepoSshPrivateKeyFile:
+    value: ""
+  bootstrap:argoRepoKnownHostsFile:
+    value: ""
+  bootstrap:argoRepoKnownHostsAutoScan:
+    value: "true"
+  bootstrap:sopsAgeKeyFile:
+    value: ""

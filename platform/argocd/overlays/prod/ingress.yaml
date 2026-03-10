@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server
+  namespace: argocd-prod
+  annotations:
+    cert-manager.io/cluster-issuer: step-ca-int-acme
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx-private
+  tls:
+    - hosts:
+        - argocd.int.blackcircuit.ca
+      secretName: argocd-int-blackcircuit-ca-tls
+  rules:
+    - host: argocd.int.blackcircuit.ca
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 443

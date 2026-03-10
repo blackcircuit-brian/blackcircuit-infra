@@ -1,22 +1,28 @@
-# Black Circuit GitOps Bootstrap (v0.4.1)
+# Black Circuit GitOps Bootstrap (v0.5)
 
 This repository provides a deterministic, opinionated bootstrap workflow
 for establishing a GitOps control plane in Kubernetes using Argo CD.
 
-The goal is not flexibility --- it is reproducibility.
+The goal is not flexibility — it is reproducibility.
 
-Version 0.4.0 introduced a fully automated DNS control plane with strict
+Version 0.4 introduced a fully automated DNS control plane with strict
 authority separation between internal and public domains.
+
+Version 0.5 promotes step-ca to the active internal ACME issuer for internal
+ingress and GitOps-managed platform workloads.
 
 ------------------------------------------------------------------------
 
 ## Documentation
 
--   Kubernetes bootstrap with kubeadm:
-    `docs/kubernetes-kubeadm-bootstrap.md`
--   Architecture: `docs/architecture.md`
--   Operations: `docs/operations.md`
--   GitOps structure: `gitops/README.md`
+- AWS EKS provisioning with Pulumi:
+  `scripts/pulumi/`
+- WireGuard private-access operations:
+  `docs/wireguard-ops.md`
+- Architecture: `docs/architecture.md`
+- Operations: `docs/operations.md`
+- GitHub + Argo CD bootstrap setup: `docs/github-argocd-bootstrap.md`
+- GitOps structure: `gitops/README.md`
 
 ------------------------------------------------------------------------
 
@@ -28,7 +34,7 @@ Release notes follow this structure:
 
 Current release:
 
-    docs/release-notes/0.4.1.md
+    docs/release-notes/v0.5.md
 
 ------------------------------------------------------------------------
 
@@ -39,19 +45,20 @@ GitOps reconciliation.
 
 Bootstrap includes:
 
--   Argo CD installation
--   ApplicationSet-based provider deployment
--   App-of-apps root wiring
--   MetalLB controller + CRDs (runtime configuration managed via GitOps)
--   ingress-nginx (public + private)
--   cert-manager
--   Internal CA for `*.int.blackcircuit.ca`
--   Dual external-dns providers:
-    -   RFC2136 (internal)
-    -   Cloudflare (public)
--   TSIG secret generation for internal DNS
--   Cloudflare token duplication
--   SSH repo secret handling for private Git
+- Argo CD installation
+- ApplicationSet-based provider deployment
+- App-of-apps root wiring
+- MetalLB controller + CRDs (runtime configuration managed via GitOps)
+- ingress-nginx (public + private)
+- cert-manager
+- Internal CA for `*.int.blackcircuit.ca`
+- step-ca (internal PKI service, GitOps-managed)
+- Dual external-dns providers:
+  - RFC2136 (internal)
+  - Cloudflare (public)
+- TSIG secret generation for internal DNS
+- Cloudflare token duplication
+- SSH repo secret handling for private Git
 
 Bootstrap installs prerequisites. GitOps owns everything else.
 
@@ -59,18 +66,18 @@ Bootstrap installs prerequisites. GitOps owns everything else.
 
 ## Design Principles
 
--   Deterministic cluster rebuild
--   Clear separation of bootstrap vs GitOps ownership
--   Explicit DNS authority boundaries
--   Minimal manual intervention
--   Declarative reconciliation (`policy=sync`)
--   Clean teardown capability
+- Deterministic cluster rebuild
+- Clear separation of bootstrap vs GitOps ownership
+- Explicit DNS authority boundaries
+- Minimal manual intervention
+- Declarative reconciliation (`policy=sync`)
+- Clean teardown capability
 
 ------------------------------------------------------------------------
 
-## DNS Architecture (v0.4)
+## DNS Architecture (v0.5)
 
-DNS is no longer optional. It is part of the control plane.
+DNS is part of the control plane.
 
 ### Internal DNS
 
@@ -80,22 +87,18 @@ Zone:
 
 Authority:
 
--   BIND9 authoritative master
--   Port 5335
--   Dynamic updates via RFC2136
--   TSIG-authenticated
--   Managed by `external-dns-internal`
--   Policy: `sync`
--   TXT ownership: `internal-1`
--   IngressClass: `nginx-private`
+- BIND9 authoritative master
+- Port 5335
+- Dynamic updates via RFC2136
+- TSIG-authenticated
+- Managed by `external-dns-internal`
+- Policy: `sync`
+- TXT ownership: `internal-1`
+- IngressClass: `nginx-private`
 
 Traffic flow:
 
 Client → Pi-hole (53) → BIND (5335)
-
-Authoritative testing:
-
-    dig @pi.int.blackcircuit.ca -p 5335 host.int.blackcircuit.ca
 
 ------------------------------------------------------------------------
 
@@ -107,87 +110,131 @@ Zone:
 
 Authority:
 
--   Cloudflare
+- Cloudflare
 
 Managed by `external-dns-public`:
 
--   Policy: `sync`
--   TXT ownership: `public-1`
--   IngressClass: `nginx-public`
--   Annotation-gated publishing
-
-Public records require explicit opt-in:
-
-    external-dns.alpha.kubernetes.io/target=<tunnel-host>
-
-Example:
-
-    2ce35617-07ec-48c7-a184-0c45e645417a.cfargotunnel.com
-
-Publishing model:
-
-Client → Cloudflare Edge → Tunnel → nginx-public
+- Policy: `sync`
+- TXT ownership: `public-1`
+- IngressClass: `nginx-public`
+- Annotation-gated publishing
 
 Private IP A-record publication is prevented by design.
 
 ------------------------------------------------------------------------
 
-## Bootstrap Phases
+## Internal PKI (step-ca)
 
-Bootstrap is driven by `bootstrap.py`.
+Version 0.5 runs step-ca as the active internal ACME-capable PKI service.
 
-### Phase: `gitops` (default)
+Characteristics:
 
--   Installs Argo CD via Helm
--   Applies root app-of-apps
--   Installs MetalLB controller
--   Applies provider ApplicationSets
--   Hands reconciliation to Argo CD
+- Deployed via provider ApplicationSet under `gitops/manifests/step-ca`
+- ClusterIP service (443 → 9000)
+- Dynamic PVC via `StorageClass/gp3` (EBS CSI)
+- Secrets are not GitOps-managed
 
-### Phase: `ingress`
+Required Kubernetes secret (created manually or via automation):
 
--   Applies ingress-related applications
--   Requires Argo CD to exist
+    step-ca-secrets
 
-### Phase: `all`
+Required keys:
 
--   Runs `gitops`
--   Then runs `ingress`
+- password
+- provisioner_password
+
+Data path in the container:
+
+    /home/step
+
+Prerequisites for dynamic volume provisioning:
+
+- EKS add-on `aws-ebs-csi-driver` installed (Pulumi-managed)
+- `StorageClass/gp3` applied in cluster bootstrap manifests
+
+### Current Certificate Model
+
+Internal ingress uses:
+
+    ClusterIssuer/step-ca-int-acme
+
+ACME directory:
+
+    https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
 
 ------------------------------------------------------------------------
 
 ## Prerequisites
 
--   Running Kubernetes cluster
--   `kubectl`
--   `helm`
--   Cluster-admin privileges
-
-Cluster provisioning is intentionally out of scope.
+- `pulumi` CLI
+- AWS credentials/profile configured for your target account
+- Python 3.11+ with `pip`
+- `sops` + `ksops` for encrypted secret rendering in Kustomize
 
 ------------------------------------------------------------------------
 
 ## Quick Start
 
-    ./bootstrap.py --env-file bootstrap/env/kubeadm.env
+Bootstrap procedure (explicit two-phase endpoint flow):
 
-Optional flags:
+    cd scripts/pulumi
+    pip install -r requirements.txt
+    pulumi stack select dev
+Phase 1 (bring-up with temporary public API access):
 
-    --ssh-key-file ~/.ssh/id_ed25519
-    --cloudflare-token-file ~/.cloudflare-token
-    --rfc2136-tsig-keyname external-dns-int
-    --apply-rfc2136-tsig-secret
-    --phase gitops|ingress|all
-    --non-interactive
+    pulumi config set bootstrap:clusterEndpointPublicAccess true
+    pulumi config set --path 'bootstrap:clusterPublicAccessCidrs[0]' '<your-public-ip>/32'
+    # Keep private endpoint as desired for your environment.
+    pulumi config set bootstrap:clusterEndpointPrivateAccess <true|false>
+    pulumi config set bootstrap:enableWireGuard true
+    pulumi config set --path 'bootstrap:wireGuardAllowedCidrs[0]' '<your-public-ip>/32'
+    # Bootstrap secrets created by Pulumi from local files (recommended)
+    pulumi config set bootstrap:argoRepoSshPrivateKeyFile ~/.ssh/argocd-repo
+    pulumi config set bootstrap:sopsAgeKeyFile ~/.config/sops/age/keys.txt
+    pulumi up -y
 
-Bootstrap will:
+After WireGuard tunnel is established and `kubectl` works through it, lock API to private-only:
 
--   Install Argo CD
--   Configure Git access
--   Generate TSIG secret for internal DNS
--   Install MetalLB
--   Deploy provider ApplicationSets
--   Allow Argo CD to reconcile the platform
+    pulumi config set bootstrap:clusterEndpointPublicAccess false
+    pulumi config rm bootstrap:clusterPublicAccessCidrs
+    pulumi up -y
+
+Notes:
+
+- Public API CIDRs use `bootstrap:clusterPublicAccessCidrs`.
+- This stack does not define `bootstrap:clusterEndpointPrivateCidrs`; private endpoint reachability is controlled by VPC routing, security groups, and WireGuard.
+- Inline secret config values are still supported (`bootstrap:argoRepoSshPrivateKey`, `bootstrap:argoRepoKnownHosts`, `bootstrap:sopsAgeKey`).
+- `bootstrap:argoRepoKnownHostsAutoScan` defaults to `true` and will run `ssh-keyscan` from `bootstrap:argoRepoUrl` when known-hosts input is not provided.
+- When the secret config values above are set, `pulumi up` creates:
+  - `argocd-<env>/repo-git-ssh`
+  - `argocd-<env>/sops-age`
+
+Fresh-cluster cert-manager CRD bootstrap (avoid first-run CRD race):
+
+    kubectl apply -k platform/cert-manager/core
+    kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout=300s
+
+Then apply full environment bootstrap:
+
+    kustomize build --enable-helm --enable-alpha-plugins --enable-exec clusters/single/dev | kubectl apply -f -
+
+Phased deployment with `deploy-all.sh`:
+
+1.  Infrastructure phase:
+
+        DEPLOY_PHASE=pulumi ENVIRONMENT=dev PULUMI_STACK=dev ./scripts/deploy-all.sh
+
+2.  Configure and validate WireGuard access:
+
+        kubectl get nodes
+
+3.  Platform manifests and ACME reconcile:
+
+        DEPLOY_PHASE=platform ENVIRONMENT=dev ./scripts/deploy-all.sh
+
+Single-command deployment with pause for WireGuard:
+
+    ENVIRONMENT=dev PULUMI_STACK=dev ./scripts/deploy-all.sh
 
 ------------------------------------------------------------------------
 
@@ -195,29 +242,12 @@ Bootstrap will:
 
 These secrets are intentionally not GitOps-managed:
 
--   `argocd/repo-git-ssh`
--   `cert-manager/cloudflare-api-token`
--   `external-dns-internal/rfc2136-tsig`
+- `argocd-<env>/repo-git-ssh`
+- `argocd-<env>/sops-age`
+- `cert-manager/cloudflare-api-token`
+- `external-dns-internal/rfc2136-tsig`
 
-Bootstrap inputs (`bootstrap/inputs/`) must be gitignored.
-
-------------------------------------------------------------------------
-
-## Certificates
-
-Internal domain:
-
-    *.int.blackcircuit.ca
-
-Internal ingress uses:
-
-    ClusterIssuer/int-ca
-
-Public ingress may use DNS01 via Cloudflare.
-
-Future evolution:
-
--   step-ca will replace the internal bootstrap CA.
+Keep bootstrap inputs and cloud credentials out of Git.
 
 ------------------------------------------------------------------------
 
@@ -231,15 +261,18 @@ With internal ingress:
 
     https://argocd.int.blackcircuit.ca
 
-(Requires trusting the internal CA root.)
-
 ------------------------------------------------------------------------
 
 ## Clean Rebuild
 
 Teardown:
 
-    bootstrap/argocd/teardown.sh
+    cd scripts/pulumi
+    pulumi destroy -y
+
+Optional single-line rebuild:
+
+    pulumi destroy -y && pulumi up -y
 
 A clean rebuild must succeed without manual intervention.
 
@@ -247,10 +280,10 @@ A clean rebuild must succeed without manual intervention.
 
 ## Out of Scope
 
--   Cluster provisioning automation
--   step-ca (planned)
--   Tunnel lifecycle automation
--   Secret encryption (SOPS)
+- WireGuard host configuration and credential lifecycle
+- Tunnel lifecycle automation
+- Secret encryption (SOPS)
+- DNS authority design (internal BIND + public Cloudflare)
 
 ------------------------------------------------------------------------
 
@@ -258,4 +291,4 @@ A clean rebuild must succeed without manual intervention.
 
 Current release:
 
-    0.4.1
+    0.5

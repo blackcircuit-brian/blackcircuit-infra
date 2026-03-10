@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cloudflare-ddns
+  namespace: cert-manager
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: updater
+              image: python:3.12-alpine
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: CF_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudflare-api-token
+                      key: api_token
+                - name: CF_ZONE_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudflare-api-token
+                      key: zone_id
+                - name: CF_RECORD_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudflare-api-token
+                      key: record_name
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  python - <<'PY'
+                  import json
+                  import os
+                  import ssl
+                  import sys
+                  import urllib.parse
+                  import urllib.request
+
+                  token = os.environ["CF_API_TOKEN"]
+                  zone_id = os.environ["CF_ZONE_ID"]
+                  record_name = os.environ["CF_RECORD_NAME"]
+
+                  headers = {
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                  }
+
+                  ctx = ssl.create_default_context()
+
+                  def req(method: str, url: str, payload=None):
+                      data = None
+                      if payload is not None:
+                          data = json.dumps(payload).encode("utf-8")
+                      request = urllib.request.Request(url, data=data, headers=headers, method=method)
+                      with urllib.request.urlopen(request, context=ctx, timeout=15) as resp:
+                          return json.loads(resp.read().decode("utf-8"))
+
+                  with urllib.request.urlopen("https://api.ipify.org", context=ctx, timeout=10) as resp:
+                      current_ip = resp.read().decode("utf-8").strip()
+
+                  query = urllib.parse.urlencode({"type": "A", "name": record_name})
+                  list_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?{query}"
+                  listed = req("GET", list_url)
+
+                  if not listed.get("success"):
+                      print(f"Cloudflare list failed: {listed}", file=sys.stderr)
+                      sys.exit(1)
+
+                  records = listed.get("result", [])
+                  if records:
+                      record = records[0]
+                      old_ip = record.get("content")
+                      if old_ip == current_ip:
+                          print(f"No change for {record_name}: {current_ip}")
+                          sys.exit(0)
+
+                      update_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record['id']}"
+                      payload = {
+                          "type": "A",
+                          "name": record_name,
+                          "content": current_ip,
+                          "ttl": 300,
+                          "proxied": False,
+                      }
+                      updated = req("PUT", update_url, payload)
+                      if not updated.get("success"):
+                          print(f"Cloudflare update failed: {updated}", file=sys.stderr)
+                          sys.exit(1)
+                      print(f"Updated {record_name}: {old_ip} -> {current_ip}")
+                  else:
+                      create_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+                      payload = {
+                          "type": "A",
+                          "name": record_name,
+                          "content": current_ip,
+                          "ttl": 300,
+                          "proxied": False,
+                      }
+                      created = req("POST", create_url, payload)
+                      if not created.get("success"):
+                          print(f"Cloudflare create failed: {created}", file=sys.stderr)
+                          sys.exit(1)
+                      print(f"Created {record_name}: {current_ip}")
+                  PY

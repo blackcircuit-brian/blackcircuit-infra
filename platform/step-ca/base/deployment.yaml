@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: step-ca
+  namespace: step-ca
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: step-ca
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: step-ca
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: init-step-ca
+          image: smallstep/step-ca:0.29.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /home/step/certs /home/step/config /home/step/db /home/step/secrets
+              if [ ! -f /home/step/config/ca.json ]; then
+                step ca init \
+                  --name "${STEP_CA_NAME}" \
+                  --dns "${STEP_CA_DNS}" \
+                  --address ":9000" \
+                  --provisioner "${STEP_CA_PROVISIONER}" \
+                  --password-file /run/secrets/step-ca/password \
+                  --provisioner-password-file /run/secrets/step-ca/provisioner_password \
+                  --deployment-type standalone \
+                  --acme
+              fi
+              if [ ! -r /home/step/config/ca.json ]; then
+                echo "init-step-ca: /home/step/config/ca.json missing or unreadable"
+                ls -la /home/step || true
+                ls -la /home/step/config || true
+                exit 1
+              fi
+              chown -R 1000:1000 /home/step
+              chmod 0755 /home/step /home/step/config /home/step/certs /home/step/db /home/step/secrets
+              chmod 0644 /home/step/config/ca.json
+          env:
+            - name: STEPPATH
+              value: /home/step
+            - name: STEP_CA_NAME
+              value: Black Circuit Internal PKI
+            - name: STEP_CA_DNS
+              value: step-ca.step-ca.svc.cluster.local
+            - name: STEP_CA_PROVISIONER
+              value: k8s-int
+          volumeMounts:
+            - name: step-ca-data
+              mountPath: /home/step
+            - name: step-ca-secrets
+              mountPath: /run/secrets/step-ca
+              readOnly: true
+      containers:
+        - name: step-ca
+          image: smallstep/step-ca:0.29.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: STEPPATH
+              value: /home/step
+          command:
+            - step-ca
+          args:
+            - /home/step/config/ca.json
+            - --password-file
+            - /run/secrets/step-ca/password
+          ports:
+            - containerPort: 9000
+              name: https
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+              scheme: HTTPS
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: step-ca-data
+              mountPath: /home/step
+            - name: step-ca-secrets
+              mountPath: /run/secrets/step-ca
+              readOnly: true
+      volumes:
+        - name: step-ca-data
+          persistentVolumeClaim:
+            claimName: step-ca-data
+        - name: step-ca-secrets
+          secret:
+            secretName: step-ca-secrets

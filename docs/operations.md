@@ -1,6 +1,6 @@
 # Black Circuit Kubernetes Platform
 
-## Operations Guide -- v0.4.0
+## Operations Guide -- v0.5
 
 ------------------------------------------------------------------------
 
@@ -17,7 +17,7 @@ It serves as a runbook for:
 -   GitOps lifecycle management
 -   Controlled environment changes
 
-This guide assumes v0.4.0 architecture.
+This guide assumes v0.5 architecture.
 
 ------------------------------------------------------------------------
 
@@ -130,27 +130,98 @@ Bootstrap is used only for:
 
 Standard invocation:
 
-    ./bootstrap.py --env-file bootstrap/env/<env>.env
+    cd scripts/pulumi
+    pulumi stack select <env>
+    pulumi up
 
 Bootstrap inputs must not be committed to Git.
 
 ------------------------------------------------------------------------
 
-## 6. Certificate Operations
+
+
+## 6. Certificate & PKI Operations
+
+### 6.1 Current Issuer Model
 
 Internal certificates:
 
--   Issuer: ClusterIssuer/int-ca
--   Used for \*.int.blackcircuit.ca
+-   Issuer: ClusterIssuer/step-ca-int-acme
+-   Used for *.int.blackcircuit.ca
+
+ACME directory:
+
+    https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
 
 If internal TLS fails:
 
 1.  Check cert-manager pods
-2.  Check certificate resource
+2.  Check Certificate resource status
 3.  Confirm secret exists
-4.  Verify CA root trust
+4.  Verify CA root trust on client
+5.  Confirm ingress class alignment (`nginx-private`)
 
-Future evolution: step-ca replacement.
+------------------------------------------------------------------------
+
+### 6.2 Internal PKI Service (step-ca)
+
+step-ca is a GitOps-managed internal PKI service and active ACME issuer backend.
+
+Characteristics:
+
+-   Namespace: `step-ca`
+-   Deployment managed via ApplicationSet (providers)
+-   ClusterIP service (443 → 9000)
+-   Dynamic PVC via `StorageClass/gp3` (EBS CSI)
+-   ACME endpoint enabled
+-   Secrets are not GitOps-managed
+
+Required Kubernetes secret:
+
+    step-ca-secrets
+
+Required keys:
+
+-   password
+-   provisioner_password
+
+Data path in the container:
+
+    /home/step
+
+------------------------------------------------------------------------
+
+### 6.3 Validating step-ca Health
+
+Check application status:
+
+    kubectl -n step-ca get pods
+    kubectl -n step-ca get pvc
+    kubectl -n step-ca get svc
+
+Check logs:
+
+    kubectl -n step-ca logs deploy/step-ca
+
+Validate ACME directory (from inside cluster):
+
+    curl -k https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
+
+Expected behavior:
+- JSON response from ACME directory
+- HTTP error types such as `accountDoesNotExist` are valid responses
+
+------------------------------------------------------------------------
+
+### 6.4 ACME Account Recovery
+
+If ClusterIssuer registration fails with `accountDoesNotExist`, reset ACME
+account-key secrets and reconcile:
+
+    kubectl -n cert-manager delete secret step-ca-int-acme-account-key --ignore-not-found
+    kubectl -n cert-manager delete secret step-ca-int-acme-account-key-v2 --ignore-not-found
+    kubectl -n cert-manager delete secret step-ca-int-acme-account-key-v3 --ignore-not-found
+    kubectl annotate clusterissuer step-ca-int-acme reconcile.now="$(date +%s)" --overwrite
 
 ------------------------------------------------------------------------
 
@@ -205,9 +276,9 @@ Manual DNS edits in managed zones will be reverted.
 
 ------------------------------------------------------------------------
 
+
 ## 11. Future Improvements
 
--   step-ca integration
 -   Admission control for hostname enforcement
 -   Secret encryption (SOPS)
 -   Tunnel lifecycle automation

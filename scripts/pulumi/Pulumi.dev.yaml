@@ -1,0 +1,14 @@
+config:
+  bootstrap:clusterEndpointPublicAccess: "false"
+  aws:region: ca-west-1
+  bootstrap:clusterPublicAccessCidrs: '["198.53.65.215/32"]'
+  bootstrap:officeLanCidrs: '["192.168.1.0/24"]'
+  bootstrap:wireGuardAllowedCidrs: '["198.53.65.215/32"]'
+  bootstrap:enableWireGuard: "true"
+  bootstrap:nodeMinSize: "2"
+  bootstrap:nodeMaxSize: "4"
+  bootstrap:nodeDesiredSize: "2"
+  bootstrap:armInstanceTypes: '["t4g.large"]'
+  bootstrap:argoRepoSshPrivateKeyFile: /home/valkyr/.ssh/argocd-repo
+  bootstrap:argoRepoKnownHostsAutoScan: "true"
+  bootstrap:sopsAgeKeyFile: /home/valkyr/.config/sops/age/keys.txt

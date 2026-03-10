@@ -1,0 +1,2 @@
+# Deprecated placeholder kept for compatibility with earlier repository layout.
+# Helm deployment is now declared directly in kustomization.yaml.

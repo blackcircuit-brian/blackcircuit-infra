@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apps-dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example-dev

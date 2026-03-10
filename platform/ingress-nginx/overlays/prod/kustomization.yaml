@@ -1,0 +1,68 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ingress-nginx-prod
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      version: v1
+      kind: Namespace
+      name: ingress-nginx
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: ingress-nginx-prod
+
+helmCharts:
+  - name: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.13.3
+    releaseName: ingress-nginx-prod-private
+    namespace: ingress-nginx-prod
+    valuesInline:
+      controller:
+        admissionWebhooks:
+          enabled: true
+          patch:
+            enabled: true
+        electionID: ingress-nginx-prod-private-leader
+        ingressClass: nginx-private
+        ingressClassResource:
+          enabled: true
+          name: nginx-private
+          controllerValue: k8s.io/nginx-private-ingress-nginx
+          default: false
+        watchIngressWithoutClass: false
+        service:
+          type: LoadBalancer
+          annotations:
+            service.beta.kubernetes.io/aws-load-balancer-type: nlb
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+            service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+  - name: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.13.3
+    releaseName: ingress-nginx-prod-public
+    namespace: ingress-nginx-prod
+    valuesInline:
+      controller:
+        admissionWebhooks:
+          enabled: true
+          patch:
+            enabled: true
+        electionID: ingress-nginx-prod-public-leader
+        ingressClass: nginx-public
+        ingressClassResource:
+          enabled: true
+          name: nginx-public
+          controllerValue: k8s.io/nginx-public-ingress-nginx
+          default: false
+        watchIngressWithoutClass: false
+        service:
+          type: NodePort
+          nodePorts:
+            http: 31080
+            https: 31443
