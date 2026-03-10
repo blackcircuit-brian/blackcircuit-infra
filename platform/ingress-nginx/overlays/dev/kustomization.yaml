@@ -37,10 +37,11 @@ helmCharts:
           default: false
         watchIngressWithoutClass: false
         service:
-          type: NodePort
-          nodePorts:
-            http: 30080
-            https: 30443
+          type: LoadBalancer
+          annotations:
+            service.beta.kubernetes.io/aws-load-balancer-type: nlb
+            service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+            service.beta.kubernetes.io/aws-load-balancer-internal: "true"
   - name: ingress-nginx
     repo: https://kubernetes.github.io/ingress-nginx
     version: 4.13.3
