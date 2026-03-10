@@ -5,10 +5,14 @@ metadata:
   namespace: argocd-dev
   annotations:
     argocd.argoproj.io/sync-wave: "20"
+    cert-manager.io/cluster-issuer: step-ca-int-acme
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
-    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
 spec:
   ingressClassName: nginx-private
+  tls:
+    - hosts:
+        - argocd-dev.int.blackcircuit.ca
+      secretName: argocd-dev-int-blackcircuit-ca-tls
   rules:
     - host: argocd-dev.int.blackcircuit.ca
       http:

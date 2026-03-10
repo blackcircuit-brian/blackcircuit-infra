@@ -1,5 +1,5 @@
 config:
-  aws:profile: brian-blackcircuit-ca
+  aws:profile: blackcircuit-brian-sso
   aws:region: ca-west-1
   bootstrap:orgName: blackcircuit
   bootstrap:environment: dev
@@ -14,7 +14,7 @@ config:
     - 10.42.192.0/18
   bootstrap:kubernetesVersion: "1.33"
   bootstrap:clusterEndpointPrivateAccess: "true"
-  bootstrap:clusterEndpointPublicAccess: "true"
+  bootstrap:clusterEndpointPublicAccess: "false"
   bootstrap:nodeArch: arm64
   bootstrap:armInstanceTypes:
     - t4g.large
@@ -39,3 +39,6 @@ config:
   bootstrap:argoRepoSshPrivateKeyFile: /home/valkyr/.ssh/argocd-repo
   bootstrap:sopsAgeKeyFile: /home/valkyr/.config/sops/age/keys.txt
   blackcircuit-aws-bootstrap:officeLanCidrs: '["10.200.10.0/24"]'
+  bootstrap:clusterEnablePublicAccess: "false"
+  bootstrap:wireGuardAttachPrivateInterface: "true"
+  bootstrap:wireGuardPrivateSubnetIndex: "0"

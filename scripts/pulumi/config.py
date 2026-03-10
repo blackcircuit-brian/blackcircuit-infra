@@ -42,6 +42,8 @@ class BootstrapConfig:
     wireguard_ami_id: str | None
     wireguard_ssh_key_name: str | None
     wireguard_tunnel_cidr: str
+    wireguard_attach_private_interface: bool
+    wireguard_private_subnet_index: int
 
     tags: Dict[str, str]
 
@@ -209,6 +211,12 @@ def get_bootstrap_config() -> BootstrapConfig:
     wireguard_ami_id = cfg.get("wireGuardAmiId") or None
     wireguard_ssh_key_name = cfg.get("wireGuardSshKeyName") or None
     wireguard_tunnel_cidr = cfg.get("wireGuardTunnelCidr") or "10.200.10.0/24"
+    wireguard_attach_private_interface = _get_bool(cfg, "wireGuardAttachPrivateInterface", True)
+    wireguard_private_subnet_index = _require_int(cfg, "wireGuardPrivateSubnetIndex", 0)
+    if wireguard_private_subnet_index < 0 or wireguard_private_subnet_index >= availability_zone_count:
+        raise ValueError(
+            "bootstrap:wireGuardPrivateSubnetIndex must be between 0 and availabilityZoneCount-1."
+        )
     try:
         tunnel_network = ipaddress.ip_network(wireguard_tunnel_cidr)
     except ValueError as exc:
@@ -247,6 +255,8 @@ def get_bootstrap_config() -> BootstrapConfig:
         wireguard_ami_id=wireguard_ami_id,
         wireguard_ssh_key_name=wireguard_ssh_key_name,
         wireguard_tunnel_cidr=wireguard_tunnel_cidr,
+        wireguard_attach_private_interface=wireguard_attach_private_interface,
+        wireguard_private_subnet_index=wireguard_private_subnet_index,
         tags=tags,
     )
 

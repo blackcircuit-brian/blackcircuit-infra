@@ -33,8 +33,10 @@ for file in "${TARGET_FILES[@]}"; do
   awk -v ca="${CA_BUNDLE}" '
     {
       if ($1 == "caBundle:") {
-        print "    caBundle: " ca
-        updated = 1
+        if (!updated) {
+          print "    caBundle: " ca
+          updated = 1
+        }
         next
       }
       print

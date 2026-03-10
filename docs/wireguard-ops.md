@@ -39,6 +39,8 @@ Pulumi config keys:
 - `bootstrap:wireGuardAmiArch`
 - `bootstrap:wireGuardAmiId` (optional override)
 - `bootstrap:wireGuardSshKeyName` (optional; SSM access is preferred)
+- `bootstrap:wireGuardAttachPrivateInterface` (default `true`)
+- `bootstrap:wireGuardPrivateSubnetIndex` (default `0`)
 
 ## 3. Reference Topology
 
@@ -71,10 +73,13 @@ On the EC2 WireGuard gateway:
 - Enable IP forwarding
 - Install `wireguard-tools`
 - Configure `wg0.conf`
-- Apply NAT (MASQUERADE) from tunnel CIDR to primary interface
+- Apply NAT (MASQUERADE) from tunnel CIDR to egress interface(s)
 
 NAT is recommended so VPC services see traffic as originating from the gateway
 instance address.
+
+If the gateway has multiple NICs (for example public + private), configure
+masquerade on each egress interface used for routed traffic.
 
 ## 6. Client Profile Requirements
 
@@ -155,6 +160,7 @@ This is the simplest end-to-end flow to establish a tunnel from a Raspberry Pi.
    ```bash
    sudo WG_ACTION="init" \
         WG_SERVER_ADDRESS="10.200.10.1/24" \
+        WG_MASQUERADE_IFACES="eth0,eth1" \
         ./scripts/wireguard/setup-gateway-wireguard.sh
    ```
 

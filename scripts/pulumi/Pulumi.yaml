@@ -69,6 +69,10 @@ config:
     value: ""
   bootstrap:wireGuardTunnelCidr:
     value: 10.200.10.0/24
+  bootstrap:wireGuardAttachPrivateInterface:
+    value: true
+  bootstrap:wireGuardPrivateSubnetIndex:
+    value: 0
   bootstrap:officeLanCidrs:
     value: []
 

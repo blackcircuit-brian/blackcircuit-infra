@@ -13,6 +13,8 @@ class WireGuardOutputs:
     instance_id: pulumi.Output[str]
     public_ip: pulumi.Output[str]
     security_group_id: pulumi.Output[str]
+    private_ip: pulumi.Output[str]
+    route_network_interface_id: pulumi.Output[str]
 
 
 def _resolve_ami(config: BootstrapConfig) -> pulumi.Output[str] | str:
@@ -144,6 +146,35 @@ sysctl --system
         ),
     )
 
+    route_network_interface_id: pulumi.Output[str] = instance.primary_network_interface_id
+    private_ip: pulumi.Output[str] = instance.private_ip
+
+    if config.wireguard_attach_private_interface:
+        private_subnet_id = network.private_subnet_ids.apply(
+            lambda subnet_ids: subnet_ids[config.wireguard_private_subnet_index]
+        )
+        private_eni = aws.ec2.NetworkInterface(
+            f"{names.prefix}-wg-private-eni",
+            subnet_id=private_subnet_id,
+            security_groups=[security_group.id],
+            source_dest_check=False,
+            tags={
+                **config.tags,
+                "Name": f"{names.prefix}-wg-private-eni",
+                "role": "wireguard-gateway-private",
+            },
+        )
+
+        aws.ec2.NetworkInterfaceAttachment(
+            f"{names.prefix}-wg-private-eni-attach",
+            instance_id=instance.id,
+            network_interface_id=private_eni.id,
+            device_index=1,
+        )
+
+        route_network_interface_id = private_eni.id
+        private_ip = private_eni.private_ip
+
     eip = aws.ec2.Eip(
         f"{names.prefix}-wg-eip",
         instance=instance.id,
@@ -159,7 +190,7 @@ sysctl --system
             f"{names.prefix}-wg-tunnel-route-1",
             route_table_id=network.private_route_table_ids.apply(lambda route_table_ids: route_table_ids[0]),
             destination_cidr_block=config.wireguard_tunnel_cidr,
-            network_interface_id=instance.primary_network_interface_id,
+            network_interface_id=route_network_interface_id,
         )
     else:
         for i in range(config.availability_zone_count):
@@ -169,11 +200,13 @@ sysctl --system
                     lambda route_table_ids, idx=i: route_table_ids[idx]
                 ),
                 destination_cidr_block=config.wireguard_tunnel_cidr,
-                network_interface_id=instance.primary_network_interface_id,
+                network_interface_id=route_network_interface_id,
             )
 
     return WireGuardOutputs(
         instance_id=instance.id,
         public_ip=eip.public_ip,
         security_group_id=security_group.id,
+        private_ip=private_ip,
+        route_network_interface_id=route_network_interface_id,
     )

@@ -14,6 +14,7 @@ WG_PUBLIC_KEY_PATH="${WG_PUBLIC_KEY_PATH:-${WG_DIR}/${WG_INTERFACE}.pub}"
 WG_SERVER_ADDRESS="${WG_SERVER_ADDRESS:-}"
 WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
 WG_PUBLIC_IFACE="${WG_PUBLIC_IFACE:-}"
+WG_MASQUERADE_IFACES="${WG_MASQUERADE_IFACES:-}"
 WG_ACTION="${WG_ACTION:-init}"
 
 WG_CLIENT_PUBLIC_KEY="${WG_CLIENT_PUBLIC_KEY:-}"
@@ -47,6 +48,7 @@ Optional:
   WG_ACTION="init|add-peer"
   WG_LISTEN_PORT="51820"
   WG_PUBLIC_IFACE="eth0"   # auto-detected if omitted
+  WG_MASQUERADE_IFACES="eth0,eth1"  # defaults to WG_PUBLIC_IFACE
   WG_OVERWRITE="false|true"
 
 Notes:
@@ -146,14 +148,43 @@ write_config() {
 
   local private_key
   private_key="$(cat "${WG_PRIVATE_KEY_PATH}")"
+  local masq_ifaces_raw
+  masq_ifaces_raw="${WG_MASQUERADE_IFACES}"
+  if [[ -z "${masq_ifaces_raw}" ]]; then
+    masq_ifaces_raw="${WG_PUBLIC_IFACE}"
+  fi
+
+  local -a masq_ifaces=()
+  local -A seen_ifaces=()
+  local raw_iface iface_trimmed
+  IFS=',' read -r -a raw_items <<<"${masq_ifaces_raw}"
+  for raw_iface in "${raw_items[@]}"; do
+    iface_trimmed="$(echo "${raw_iface}" | xargs)"
+    if [[ -n "${iface_trimmed}" && -z "${seen_ifaces[${iface_trimmed}]:-}" ]]; then
+      masq_ifaces+=("${iface_trimmed}")
+      seen_ifaces["${iface_trimmed}"]=1
+    fi
+  done
+  if [[ "${#masq_ifaces[@]}" -eq 0 ]]; then
+    echo "No masquerade interfaces resolved. Set WG_MASQUERADE_IFACES or WG_PUBLIC_IFACE." >&2
+    exit 1
+  fi
+
+  local post_up post_down out_iface
+  post_up="iptables -A FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -A FORWARD -o ${WG_INTERFACE} -j ACCEPT"
+  post_down="iptables -D FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -D FORWARD -o ${WG_INTERFACE} -j ACCEPT"
+  for out_iface in "${masq_ifaces[@]}"; do
+    post_up="${post_up}; iptables -t nat -A POSTROUTING -o ${out_iface} -j MASQUERADE"
+    post_down="${post_down}; iptables -t nat -D POSTROUTING -o ${out_iface} -j MASQUERADE"
+  done
 
   {
     echo "[Interface]"
     echo "PrivateKey = ${private_key}"
     echo "Address = ${WG_SERVER_ADDRESS}"
     echo "ListenPort = ${WG_LISTEN_PORT}"
-    echo "PostUp = iptables -A FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -A FORWARD -o ${WG_INTERFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -o ${WG_PUBLIC_IFACE} -j MASQUERADE"
-    echo "PostDown = iptables -D FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -D FORWARD -o ${WG_INTERFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -o ${WG_PUBLIC_IFACE} -j MASQUERADE"
+    echo "PostUp = ${post_up}"
+    echo "PostDown = ${post_down}"
     if [[ -n "${WG_CLIENT_PUBLIC_KEY}" && -n "${WG_CLIENT_ADDRESS}" ]]; then
       echo
       echo "[Peer]"

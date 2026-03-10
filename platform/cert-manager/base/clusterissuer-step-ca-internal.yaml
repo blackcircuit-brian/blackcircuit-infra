@@ -7,11 +7,8 @@ metadata:
 spec:
   acme:
     email: pki@blackcircuit.ca
-    server: https://step-ca.step-ca.svc.cluster.local/acme/k8s-int/directory
-    # Base64-encoded PEM root certificate for step-ca TLS trust.
-    # Populate from:
-    # kubectl -n step-ca exec deploy/step-ca -- cat /home/step/certs/root_ca.crt | base64 -w0
-    caBundle: REPLACE_WITH_BASE64_STEP_CA_ROOT_CERT
+    server: https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
+    caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUI1ekNDQVkyZ0F3SUJBZ0lRTFFRZ3BhanBYbGFqZ3YxUjNNTG5CakFLQmdncWhrak9QUVFEQWpCU01TTXcKSVFZRFZRUUtFeHBDYkdGamF5QkRhWEpqZFdsMElFbHVkR1Z5Ym1Gc0lGQkxTVEVyTUNrR0ExVUVBeE1pUW14aApZMnNnUTJseVkzVnBkQ0JKYm5SbGNtNWhiQ0JRUzBrZ1VtOXZkQ0JEUVRBZUZ3MHlOakF6TURjd01EQTVOVGhhCkZ3MHpOakF6TURRd01EQTVOVGhhTUZJeEl6QWhCZ05WQkFvVEdrSnNZV05ySUVOcGNtTjFhWFFnU1c1MFpYSnUKWVd3Z1VFdEpNU3N3S1FZRFZRUURFeUpDYkdGamF5QkRhWEpqZFdsMElFbHVkR1Z5Ym1Gc0lGQkxTU0JTYjI5MApJRU5CTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFUzhmNGQ2SWFKZHBZUlFtdTJqaDhQdkErCjkvMDk2TGRlMWxKVTRiRENScGg0djFTUmwzRjZMUFd5UVdJaEY3ZU83aFhLdmxNSUtsQ0NKeE4zMW5BZDFhTkYKTUVNd0RnWURWUjBQQVFIL0JBUURBZ0VHTUJJR0ExVWRFd0VCL3dRSU1BWUJBZjhDQVFFd0hRWURWUjBPQkJZRQpGQU9KL01Ld3NiZTFzUEZrZjFyVjRMb2xVUkFETUFvR0NDcUdTTTQ5QkFNQ0EwZ0FNRVVDSUN1WURrNDdiWE9UCndLZXFlcFNaekxSMzBybGlxVkwvcjBSdS9CTzNRSmR2QWlFQXIzNm5aK0N0bGJiK25mKzdzSklpL1lCWXBUQloKcjJOb3NFbitQeVNWYU5NPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
     privateKeySecretRef:
       name: step-ca-int-acme-account-key
     solvers:
