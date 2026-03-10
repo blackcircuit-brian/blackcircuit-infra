@@ -9,3 +9,6 @@ config:
   bootstrap:nodeMaxSize: "4"
   bootstrap:nodeDesiredSize: "2"
   bootstrap:armInstanceTypes: '["t4g.large"]'
+  bootstrap:argoRepoSshPrivateKeyFile: /home/valkyr/.ssh/argocd-repo
+  bootstrap:argoRepoKnownHostsAutoScan: "true"
+  bootstrap:sopsAgeKeyFile: /home/valkyr/.config/sops/age/keys.txt

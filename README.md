@@ -1,4 +1,4 @@
-# Black Circuit GitOps Bootstrap (v0.4.2)
+# Black Circuit GitOps Bootstrap (v0.5)
 
 This repository provides a deterministic, opinionated bootstrap workflow
 for establishing a GitOps control plane in Kubernetes using Argo CD.
@@ -8,8 +8,8 @@ The goal is not flexibility — it is reproducibility.
 Version 0.4 introduced a fully automated DNS control plane with strict
 authority separation between internal and public domains.
 
-Version 0.4.2 introduces an internal PKI service (step-ca) deployed under GitOps.
-Issuer migration to ACME will follow in a subsequent point release.
+Version 0.5 promotes step-ca to the active internal ACME issuer for internal
+ingress and GitOps-managed platform workloads.
 
 ------------------------------------------------------------------------
 
@@ -34,7 +34,7 @@ Release notes follow this structure:
 
 Current release:
 
-    docs/release-notes/0.4.2.md
+    docs/release-notes/v0.5.md
 
 ------------------------------------------------------------------------
 
@@ -75,7 +75,7 @@ Bootstrap installs prerequisites. GitOps owns everything else.
 
 ------------------------------------------------------------------------
 
-## DNS Architecture (v0.4)
+## DNS Architecture (v0.5)
 
 DNS is part of the control plane.
 
@@ -125,12 +125,12 @@ Private IP A-record publication is prevented by design.
 
 ## Internal PKI (step-ca)
 
-Version 0.4.2 deploys step-ca as an internal ACME-capable PKI service.
+Version 0.5 runs step-ca as the active internal ACME-capable PKI service.
 
 Characteristics:
 
 - Deployed via provider ApplicationSet under `gitops/manifests/step-ca`
-- ClusterIP service (443 → 8443)
+- ClusterIP service (443 → 9000)
 - Dynamic PVC via `StorageClass/gp3` (EBS CSI)
 - Secrets are not GitOps-managed
 
@@ -145,7 +145,7 @@ Required keys:
 
 Data path in the container:
 
-    /var/lib/step-ca
+    /home/step
 
 Prerequisites for dynamic volume provisioning:
 
@@ -154,14 +154,13 @@ Prerequisites for dynamic volume provisioning:
 
 ### Current Certificate Model
 
-Internal ingress still uses:
+Internal ingress uses:
 
-    ClusterIssuer/int-ca
+    ClusterIssuer/step-ca-int-acme
 
-The bootstrap self-signed CA remains authoritative in v0.4.2.
+ACME directory:
 
-step-ca is deployed and reachable, but cert-manager issuer cutover is deferred
-to a later point release.
+    https://step-ca.step-ca.svc.cluster.local/acme/acme/directory
 
 ------------------------------------------------------------------------
 
@@ -219,7 +218,21 @@ Then apply full environment bootstrap:
 
     kustomize build --enable-helm --enable-alpha-plugins --enable-exec clusters/single/dev | kubectl apply -f -
 
-Single-command deployment (infra + manifests + step-ca ACME issuer reconcile):
+Phased deployment with `deploy-all.sh`:
+
+1.  Infrastructure phase:
+
+        DEPLOY_PHASE=pulumi ENVIRONMENT=dev PULUMI_STACK=dev ./scripts/deploy-all.sh
+
+2.  Configure and validate WireGuard access:
+
+        kubectl get nodes
+
+3.  Platform manifests and ACME reconcile:
+
+        DEPLOY_PHASE=platform ENVIRONMENT=dev ./scripts/deploy-all.sh
+
+Single-command deployment with pause for WireGuard:
 
     ENVIRONMENT=dev PULUMI_STACK=dev ./scripts/deploy-all.sh
 
@@ -270,7 +283,7 @@ A clean rebuild must succeed without manual intervention.
 - WireGuard host configuration and credential lifecycle
 - Tunnel lifecycle automation
 - Secret encryption (SOPS)
-- cert-manager ACME cutover to step-ca (planned)
+- DNS authority design (internal BIND + public Cloudflare)
 
 ------------------------------------------------------------------------
 
@@ -278,4 +291,4 @@ A clean rebuild must succeed without manual intervention.
 
 Current release:
 
-    0.4.2
+    0.5

@@ -223,3 +223,63 @@ Scripts referenced above:
 - `scripts/wireguard/setup-pi-wireguard.sh`
 - `scripts/wireguard/setup-gateway-wireguard.sh`
 - `scripts/wireguard/configure-coredns-int-domain.sh`
+- `scripts/wireguard/setup-bind-secondary-zone.sh`
+- `scripts/wireguard/setup-gateway-bind-forwarder.sh`
+- `scripts/wireguard/setup-gateway-bind-master-zone.sh`
+
+## 11. DNS Host Secondary Setup (Optional)
+
+If moving the authoritative `int.blackcircuit.ca` master to the WireGuard
+gateway, run this on the existing DNS host to configure BIND as secondary:
+
+```bash
+sudo MASTER_IP="<gateway-master-ip>" \
+     ./scripts/wireguard/setup-bind-secondary-zone.sh
+```
+
+If your master requires TSIG for transfers:
+
+```bash
+sudo MASTER_IP="<gateway-master-ip>" \
+     MASTER_TSIG_NAME="rfc2136-tsig" \
+     MASTER_TSIG_SECRET="<base64-secret>" \
+     ./scripts/wireguard/setup-bind-secondary-zone.sh
+```
+
+## 12. Gateway BIND Forwarder Setup
+
+If you want the WireGuard gateway to host BIND and forward `int.blackcircuit.ca`
+to the current DNS server:
+
+```bash
+sudo FORWARD_DNS="10.200.10.2" \
+     FORWARD_PORT="5335" \
+     ./scripts/wireguard/setup-gateway-bind-forwarder.sh
+```
+
+Then point CoreDNS to the gateway resolver instead of the remote DNS host:
+
+```bash
+FORWARD_DNS="<gateway-private-ip>" ./scripts/wireguard/configure-coredns-int-domain.sh
+```
+
+## 13. Gateway BIND Master Setup (RFC2136 + TSIG)
+
+If promoting the WireGuard gateway to authoritative master for
+`int.blackcircuit.ca`, run:
+
+```bash
+sudo NS_A_RECORD_VALUE="<gateway-private-ip>" \
+     ./scripts/wireguard/setup-gateway-bind-master-zone.sh
+```
+
+This script generates TSIG (unless provided) and prints a `kubectl` command
+to update the `external-dns-internal/rfc2136-tsig` secret.
+
+To reuse an existing TSIG key, pass either a key file or secret file:
+
+```bash
+sudo NS_A_RECORD_VALUE="<gateway-private-ip>" \
+     TSIG_KEY_SOURCE_FILE="/etc/bind/keys/rfc2136-tsig.key" \
+     ./scripts/wireguard/setup-gateway-bind-master-zone.sh
+```
