@@ -81,6 +81,10 @@ instance address.
 If the gateway has multiple NICs (for example public + private), configure
 masquerade on each egress interface used for routed traffic.
 
+The gateway setup script also enforces Linux policy routing priority so
+`lookup main` is set to a higher priority (`100` by default), which avoids
+multi-NIC reply-path issues on EC2.
+
 ## 6. Client Profile Requirements
 
 Each client profile should include:

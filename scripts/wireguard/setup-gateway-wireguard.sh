@@ -16,6 +16,8 @@ WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
 WG_PUBLIC_IFACE="${WG_PUBLIC_IFACE:-}"
 WG_MASQUERADE_IFACES="${WG_MASQUERADE_IFACES:-}"
 WG_ACTION="${WG_ACTION:-init}"
+WG_MAIN_ROUTE_RULE_FIX="${WG_MAIN_ROUTE_RULE_FIX:-true}"
+WG_MAIN_ROUTE_RULE_PREF="${WG_MAIN_ROUTE_RULE_PREF:-100}"
 
 WG_CLIENT_PUBLIC_KEY="${WG_CLIENT_PUBLIC_KEY:-}"
 WG_CLIENT_ADDRESS="${WG_CLIENT_ADDRESS:-}"
@@ -49,6 +51,8 @@ Optional:
   WG_LISTEN_PORT="51820"
   WG_PUBLIC_IFACE="eth0"   # auto-detected if omitted
   WG_MASQUERADE_IFACES="eth0,eth1"  # defaults to WG_PUBLIC_IFACE
+  WG_MAIN_ROUTE_RULE_FIX="true|false"  # ensure lookup main is high priority
+  WG_MAIN_ROUTE_RULE_PREF="100"        # preferred priority for lookup main
   WG_OVERWRITE="false|true"
 
 Notes:
@@ -213,6 +217,31 @@ start_tunnel() {
   fi
 }
 
+ensure_main_route_rule_priority() {
+  if [[ "${WG_MAIN_ROUTE_RULE_FIX}" != "true" ]]; then
+    return
+  fi
+
+  if ! [[ "${WG_MAIN_ROUTE_RULE_PREF}" =~ ^[0-9]+$ ]]; then
+    echo "WG_MAIN_ROUTE_RULE_PREF must be an integer." >&2
+    exit 1
+  fi
+
+  # Ensure main table lookup happens before broad default priorities on multi-NIC hosts.
+  while read -r pref _; do
+    if [[ "${pref}" == "${WG_MAIN_ROUTE_RULE_PREF}:" ]]; then
+      continue
+    fi
+    if [[ "${pref}" == "32766:" ]]; then
+      ip rule del pref 32766 lookup main || true
+    fi
+  done < <(ip -4 rule show | awk '$3=="lookup" && $4=="main" {print $1, $0}')
+
+  if ! ip -4 rule show | awk -v pref="${WG_MAIN_ROUTE_RULE_PREF}:" '$1==pref && $3=="lookup" && $4=="main" {found=1} END {exit !found}'; then
+    ip rule add pref "${WG_MAIN_ROUTE_RULE_PREF}" lookup main
+  fi
+}
+
 add_peer() {
   if [[ ! -f "${WG_CONF_PATH}" ]]; then
     echo "${WG_CONF_PATH} not found. Run WG_ACTION=init first." >&2
@@ -257,6 +286,7 @@ main() {
   if [[ "${WG_ACTION}" == "init" ]]; then
     write_config
     enable_forwarding
+    ensure_main_route_rule_priority
 
     if [[ "${WG_ENABLE_NOW}" == "true" ]]; then
       start_tunnel

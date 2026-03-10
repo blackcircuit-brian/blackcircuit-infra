@@ -176,13 +176,18 @@ sysctl --system
         private_ip = private_eni.private_ip
 
     eip = aws.ec2.Eip(
-        f"{names.prefix}-wg-eip",
-        instance=instance.id,
+        f"{names.prefix}-wg-eip-v2",
         domain="vpc",
         tags={
             **config.tags,
             "Name": f"{names.prefix}-wg-eip",
         },
+    )
+
+    aws.ec2.EipAssociation(
+        f"{names.prefix}-wg-eip-assoc",
+        allocation_id=eip.id,
+        network_interface_id=instance.primary_network_interface_id,
     )
 
     if config.nat_gateway_strategy == "single":
