@@ -40,6 +40,47 @@ if [[ ! -x "${KSOPS_PLUGIN_BIN}" ]]; then
   chmod 0755 "${KSOPS_PLUGIN_BIN}"
 fi
 
+VALIDATION_ROOT="${VALIDATION_ROOT:-.}"
+TEMP_VALIDATION_ROOT=""
+
+if [[ -z "${SOPS_AGE_KEY_FILE:-}" && -z "${SOPS_AGE_KEY:-}" ]]; then
+  echo "warning: SOPS age key not set; using validation-only fallback for step-ca encrypted secret" >&2
+  TEMP_VALIDATION_ROOT="$(mktemp -d)"
+  cp -a . "${TEMP_VALIDATION_ROOT}/repo"
+  VALIDATION_ROOT="${TEMP_VALIDATION_ROOT}/repo"
+
+  cat > "${VALIDATION_ROOT}/platform/step-ca/base/validation-secrets.yaml" <<'EOF'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: step-ca-secrets
+  namespace: step-ca
+type: Opaque
+stringData:
+  password: validation-only-password
+  provisioner_password: validation-only-provisioner-password
+EOF
+
+  cat > "${VALIDATION_ROOT}/platform/step-ca/base/kustomization.yaml" <<'EOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - service.yaml
+  - deployment.yaml
+  - validation-secrets.yaml
+EOF
+fi
+
+cleanup() {
+  if [[ -n "${TEMP_VALIDATION_ROOT}" ]]; then
+    rm -rf "${TEMP_VALIDATION_ROOT}"
+  fi
+}
+trap cleanup EXIT
+
 overlays=(
   "clusters/single/dev"
   "clusters/single/test"
@@ -53,6 +94,7 @@ validate_overlay() {
   local overlay="$1"
   local attempt=1
   local delay="${RETRY_DELAY_SECONDS}"
+  local overlay_path="${VALIDATION_ROOT}/${overlay}"
 
   while true; do
     if KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME}" \
@@ -61,7 +103,7 @@ validate_overlay() {
         --enable-alpha-plugins \
         --enable-exec \
         --helm-command "${HELM_BIN}" \
-        "${overlay}" >/dev/null; then
+        "${overlay_path}" >/dev/null; then
       return 0
     fi
 
