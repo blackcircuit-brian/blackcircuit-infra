@@ -46,15 +46,39 @@ overlays=(
   "clusters/single/prod"
 )
 
+RETRY_COUNT="${RETRY_COUNT:-3}"
+RETRY_DELAY_SECONDS="${RETRY_DELAY_SECONDS:-5}"
+
+validate_overlay() {
+  local overlay="$1"
+  local attempt=1
+  local delay="${RETRY_DELAY_SECONDS}"
+
+  while true; do
+    if KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME}" \
+      "${KUSTOMIZE_BIN}" build \
+        --enable-helm \
+        --enable-alpha-plugins \
+        --enable-exec \
+        --helm-command "${HELM_BIN}" \
+        "${overlay}" >/dev/null; then
+      return 0
+    fi
+
+    if (( attempt >= RETRY_COUNT )); then
+      return 1
+    fi
+
+    echo "retry ${attempt}/${RETRY_COUNT} failed for ${overlay}; retrying in ${delay}s..." >&2
+    sleep "${delay}"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 for overlay in "${overlays[@]}"; do
   echo "==> validating ${overlay}"
-  KUSTOMIZE_PLUGIN_HOME="${KUSTOMIZE_PLUGIN_HOME}" \
-  "${KUSTOMIZE_BIN}" build \
-    --enable-helm \
-    --enable-alpha-plugins \
-    --enable-exec \
-    --helm-command "${HELM_BIN}" \
-    "${overlay}" >/dev/null
+  validate_overlay "${overlay}"
   echo "ok: ${overlay}"
 done
 
